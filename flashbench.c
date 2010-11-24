@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#define _LARGEFILE64_SOURCE
+#define _FILE_OFFSET_BITS 64
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -12,7 +12,7 @@
 #include <errno.h>
 #include <fcntl.h>
 
-typedef uint64_t ns_t;
+typedef unsigned long long ns_t;
 
 static inline ns_t time_to_ns(struct timespec *ts)
 {
@@ -63,17 +63,29 @@ static ns_t time_write(int fd, off_t pos, size_t size)
 int main(int argc, char **argv)
 {
 	int fd;
+	off_t file_size;
 
 	if (argc < 2) {
 		fprintf(stderr, "%s: need arguments\n", argv[0]);
 		return -EINVAL;
 	}
 	
-	fd = open(argv[1], O_RDWR | O_DIRECT | O_NOATIME);
+	fd = open(argv[1], O_RDWR | O_DIRECT | O_SYNC | O_NOATIME);
 	if (fd < 0) {
 		perror("open");
 		return -errno;
 	}
+
+	file_size = lseek(fd, 0, SEEK_END);
+	if (file_size < 0) {
+		perror("seek");
+		return -errno;
+	}
+
+	printf("%lld\n", time_read(fd, 0, 4095));
+
+	printf("filename: \"%s\"\n", argv[1]);
+	printf("filesize: 0x%llx\n", (unsigned long long)file_size);
 
 	return 0;
 }
