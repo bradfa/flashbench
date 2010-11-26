@@ -11,8 +11,13 @@
 #include <time.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 
-typedef unsigned long long ns_t;
+typedef long long ns_t;
+struct device {
+	int fd;
+	ssize_t size;
+};
 
 static inline ns_t time_to_ns(struct timespec *ts)
 {
@@ -26,66 +31,211 @@ static ns_t get_ns(void)
 	return time_to_ns(&ts);
 }
 
-static ns_t time_read(int fd, off_t pos, size_t size)
+static ns_t ns_min(int count, ns_t data[])
 {
-	static char readbuf[16 * 1024 * 1024];
+	int i;
+	ns_t min = LLONG_MAX;
+
+	for (i=0; i<count; i++) {
+		if (data[i] < min)
+			min = data[i];
+	}
+
+	return min;
+}
+
+static ns_t ns_max(int count, ns_t data[])
+{
+	int i;
+	ns_t max = 0;
+
+	for (i=0; i<count; i++) {
+		if (data[i] > max)
+			max = data[i];
+	}
+
+	return max;
+}
+
+static ns_t ns_avg(int count, ns_t data[])
+{
+	int i;
+	ns_t sum = 0;
+
+	for (i=0; i<count; i++) {
+		sum += data[i];
+	}
+
+	return sum / i;
+}
+
+static void format_ns(char *out, ns_t ns)
+{
+	if (ns < 1000)
+		snprintf(out, 8, "%lldns", ns);
+	else if (ns < 1000 * 1000)
+		snprintf(out, 8, "%.3gµs", ns / 1000.0);
+	else if (ns < 1000 * 1000 * 1000)
+		snprintf(out, 8, "%.3gms", ns / 1000000.0);
+	else {
+		snprintf(out, 8, "%.4gs", ns / 1000000000.0);
+	}
+}
+
+static void print_ns(ns_t ns)
+{
+	char buf[8];
+	format_ns(buf, ns);
+	puts(buf);
+}
+
+static ns_t time_read(struct device *dev, off_t pos, size_t size)
+{
+	static char readbuf[16 * 1024 * 1024] __attribute__((aligned(4096)));
 	ns_t now = get_ns();
 	ssize_t ret;
 
+	if (size > sizeof(readbuf))
+		return -ENOMEM;
+
 	do {
-		ret = pread(fd, readbuf, size, pos);
+		ret = pread(dev->fd, readbuf, size, pos % dev->size);
 		if (ret > 0) {
 			size -= ret;
 			pos += ret;
 		}
-	} while (ret > 0 || ret == -EAGAIN);
+	} while (ret > 0 || errno == -EAGAIN);
+
+	if (ret)
+		return -errno;
 
 	return get_ns() - now;
 }
 
-static ns_t time_write(int fd, off_t pos, size_t size)
+static ns_t time_write(struct device *dev, off_t pos, size_t size)
 {
-	static char writebuf[16 * 1024 * 1024];
+	static char writebuf[16 * 1024 * 1024] __attribute__((aligned(4096)));
 	ns_t now = get_ns();
 	ssize_t ret;
 
+	if (size > sizeof(writebuf))
+		return -ENOMEM;
+
 	do {
-		ret = pwrite(fd, writebuf, size, pos);
+		ret = pwrite(dev->fd, writebuf, size, pos % dev->size);
 		if (ret > 0) {
 			size -= ret;
 			pos += ret;
 		}
-	} while (ret > 0 || ret == -EAGAIN);
+	} while (ret > 0 || errno == -EAGAIN);
+
+	if (ret)
+		return -errno;
 
 	return get_ns() - now;
+}
+
+static int time_read_interval(struct device *dev, int count, size_t size, ns_t results[])
+{
+	int i;
+	off_t pos;
+
+	for (i=0; i < count; i++) {
+		pos = i * size * 2; /* every other block */
+		results[i] = time_read(dev, pos, size);
+		if (results[i] < 0)
+			return results[i];
+	}
+
+	return 0;
+}
+
+static int time_read_linear(struct device *dev, int count, size_t size, ns_t results[])
+{
+	int i;
+	off_t pos;
+
+	for (i=0; i < count; i++) {
+		pos = (count - i) * size; /* every other block */
+		results[i] = time_read(dev, pos, size);
+		if (results[i] < 0)
+			return results[i];
+	}
+
+	return 0;
+}
+
+static int try_intervals(struct device *dev)
+{
+	const int count = 128;
+	const off_t rounds = 12;
+	ns_t times[count];
+	int i;
+
+	for (i=0; i<rounds; i++) {
+		char min[8], avg[8], max[8];
+		long blocksize = 512l << i;
+		int ret;
+
+		ret = time_read_interval(dev, count, blocksize, times);
+		if (ret < 0)
+			return ret;
+
+		format_ns(min, ns_min(count, times));
+		format_ns(avg, ns_avg(count, times));
+		format_ns(max, ns_max(count, times));
+
+		printf("%ld bytes: min %s avg %s max %s: %g MB/s\n", blocksize,
+			 min, avg, max, blocksize / (ns_min(count, times) / 1000.0));
+
+		ret = time_read_linear(dev, count, blocksize, times);
+		if (ret < 0)
+			return ret;
+
+		format_ns(min, ns_min(count, times));
+		format_ns(avg, ns_avg(count, times));
+		format_ns(max, ns_max(count, times));
+
+		printf("%ld bytes: min %s avg %s max %s: %g MB/s\n", blocksize,
+			 min, avg, max, blocksize / (ns_min(count, times) / 1000.0));
+	}
+
+	return 0;
 }
 
 int main(int argc, char **argv)
 {
-	int fd;
-	off_t file_size;
+	struct device dev;
 
 	if (argc < 2) {
 		fprintf(stderr, "%s: need arguments\n", argv[0]);
 		return -EINVAL;
 	}
 	
-	fd = open(argv[1], O_RDWR | O_DIRECT | O_SYNC | O_NOATIME);
-	if (fd < 0) {
+	dev.fd = open(argv[1], O_RDWR | O_DIRECT | O_SYNC | O_NOATIME);
+	if (dev.fd < 0) {
 		perror("open");
 		return -errno;
 	}
 
-	file_size = lseek(fd, 0, SEEK_END);
-	if (file_size < 0) {
+	dev.size = lseek(dev.fd, 0, SEEK_END);
+	if (dev.size < 0) {
 		perror("seek");
 		return -errno;
 	}
 
-	printf("%lld\n", time_read(fd, 0, 4095));
-
 	printf("filename: \"%s\"\n", argv[1]);
-	printf("filesize: 0x%llx\n", (unsigned long long)file_size);
+	printf("filesize: 0x%llx\n", (unsigned long long)dev.size);
+
+	{
+		int ret;
+
+		ret = try_intervals(&dev);
+		if (ret < 0) {
+			perror("read");
+			return ret;
+		}
+	}
 
 	return 0;
 }
