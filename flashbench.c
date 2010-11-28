@@ -91,7 +91,7 @@ static void print_ns(ns_t ns)
 
 static ns_t time_read(struct device *dev, off_t pos, size_t size)
 {
-	static char readbuf[16 * 1024 * 1024] __attribute__((aligned(4096)));
+	static char readbuf[64 * 1024 * 1024] __attribute__((aligned(4096)));
 	ns_t now = get_ns();
 	ssize_t ret;
 
@@ -114,7 +114,7 @@ static ns_t time_read(struct device *dev, off_t pos, size_t size)
 
 static ns_t time_write(struct device *dev, off_t pos, size_t size)
 {
-	static char writebuf[16 * 1024 * 1024] __attribute__((aligned(4096)));
+	static char writebuf[64 * 1024 * 1024] __attribute__((aligned(4096)));
 	ns_t now = get_ns();
 	ssize_t ret;
 
@@ -160,6 +160,40 @@ static int time_read_linear(struct device *dev, int count, size_t size, ns_t res
 		results[i] = time_read(dev, pos, size);
 		if (results[i] < 0)
 			return results[i];
+	}
+
+	return 0;
+}
+
+static int try_read_cache(struct device *dev)
+{
+	const int rounds = 18;
+	const int tries = 8;
+	ns_t times[rounds];
+	int i;
+
+	for (i = 0; i < rounds; i++) {
+		long blocksize = 512l << i;
+		char min[8];
+		int j;
+
+		times[i] = LLONG_MAX;
+
+		for (j = 0; j < tries; j++) {
+			ns_t ns, max;
+			ns = time_read(dev, blocksize, blocksize);
+
+			if (ns < 0)
+				return ns;
+
+			if (ns < times[i])
+				times[i] = ns;
+		}
+
+		format_ns(min, times[i]);
+
+		printf("%ld bytes: %s, %g MB/s\n", blocksize, min, 
+					blocksize / (times[i] / 1000.0));
 	}
 
 	return 0;
@@ -230,11 +264,20 @@ int main(int argc, char **argv)
 	{
 		int ret;
 
-		ret = try_intervals(&dev);
+		ret = try_read_cache(&dev);
 		if (ret < 0) {
-			perror("read");
+			errno = -ret;
+			perror("try_read_cache");
 			return ret;
 		}
+
+		ret = try_intervals(&dev);
+		if (ret < 0) {
+			errno = -ret;
+			perror("try_intervals");
+			return ret;
+		}
+
 	}
 
 	return 0;
