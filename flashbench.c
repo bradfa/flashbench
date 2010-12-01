@@ -89,7 +89,7 @@ static void print_ns(ns_t ns)
 	puts(buf);
 }
 
-static void regression(ns_t ns[], off_t bytes[], int count)
+static void regression(ns_t ns[], off_t bytes[], int count, ns_t *atime, float *throughput)
 {
 	int i;
 	float sum_x = 0, sum_xx = 0;
@@ -111,6 +111,9 @@ static void regression(ns_t ns[], off_t bytes[], int count)
 
 	format_ns(buf, intercept);
 	printf("%g MB/s, %s access time\n", 1000.0 / slope, buf);
+
+	*atime = intercept;
+	*throughput = 1000.0 / slope;
 }
 
 static ns_t time_read(struct device *dev, off_t pos, size_t size)
@@ -205,7 +208,7 @@ static int try_read_cache(struct device *dev)
 
 		for (j = 0; j < tries; j++) {
 			ns_t ns;
-			ns = time_read(dev, 0, blocksize);
+			ns = time_read(dev, 1024 * 1024 * 1024, blocksize);
 
 			if (ns < 0)
 				return ns;
@@ -252,10 +255,13 @@ static int try_interval(struct device *dev, long blocksize, ns_t *min_time, int 
 
 static int try_intervals(struct device *dev)
 {
-	const int count = 128;
+	const int count = 32;
 	const off_t rounds = 12;
+	const int ignore = 3;
 	ns_t min[rounds];
 	off_t bytes[rounds];
+	ns_t atime;
+	float throughput;
 	int i;
 
 	for (i=0; i<rounds; i++) {
@@ -264,7 +270,12 @@ static int try_intervals(struct device *dev)
 
 	}
 
-	regression(min, bytes, rounds);
+	regression(min + ignore, bytes + ignore, rounds - ignore, &atime, &throughput);
+
+	for (i=0; i<rounds; i++) {
+		printf("bytes %lld, time %lld overhead %g\n", (long long)bytes[i], min[i],
+			min[i] - atime - bytes[i] * 1000 / throughput);
+	}
 
 	return 0;
 }
@@ -295,12 +306,14 @@ int main(int argc, char **argv)
 
 	{
 		int ret;
+#if 1
 		ret = try_read_cache(&dev);
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_read_cache");
 			return ret;
 		}
+#endif
 		ret = try_intervals(&dev);
 		if (ret < 0) {
 			errno = -ret;
