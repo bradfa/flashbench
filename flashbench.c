@@ -89,6 +89,30 @@ static void print_ns(ns_t ns)
 	puts(buf);
 }
 
+static void regression(ns_t ns[], off_t bytes[], int count)
+{
+	int i;
+	float sum_x = 0, sum_xx = 0;
+	float sum_y = 0, sum_xy = 0;
+	float slope, intercept;
+	char buf[8];
+
+	for (i = 0; i < count; i++) {
+		sum_x	+= (float)bytes[i];
+		sum_xx	+= (float)bytes[i] * (float)bytes[i];
+		sum_y	+= (float)ns[i];
+		sum_xy	+= (float)ns[i] * (float)bytes[i];
+	}
+
+	/* standard linear regression method */
+	slope = (float)(count * sum_xy - sum_x * sum_y) /
+		(float)(count * sum_xx - sum_x * sum_x);
+	intercept = (sum_y - slope * sum_x) / count;
+
+	format_ns(buf, intercept);
+	printf("%g MB/s, %s access time\n", 1000.0 / slope, buf);
+}
+
 static ns_t time_read(struct device *dev, off_t pos, size_t size)
 {
 	static char readbuf[64 * 1024 * 1024] __attribute__((aligned(4096)));
@@ -180,8 +204,8 @@ static int try_read_cache(struct device *dev)
 		times[i] = LLONG_MAX;
 
 		for (j = 0; j < tries; j++) {
-			ns_t ns, max;
-			ns = time_read(dev, blocksize, blocksize);
+			ns_t ns;
+			ns = time_read(dev, 0, blocksize);
 
 			if (ns < 0)
 				return ns;
@@ -199,40 +223,48 @@ static int try_read_cache(struct device *dev)
 	return 0;
 }
 
+static void print_one_blocksize(int count, ns_t *times, off_t blocksize)
+{
+	char min[8], avg[8], max[8];
+
+	format_ns(min, ns_min(count, times));
+	format_ns(avg, ns_avg(count, times));
+	format_ns(max, ns_max(count, times));
+
+	printf("%ld bytes: min %s avg %s max %s: %g MB/s\n", blocksize,
+		 min, avg, max, blocksize / (ns_min(count, times) / 1000.0));
+}
+
+static int try_interval(struct device *dev, long blocksize, ns_t *min_time, int count)
+{
+	int ret;
+	ns_t times[count];
+
+	ret = time_read_linear(dev, count, blocksize, times);
+	if (ret < 0)
+		return ret;
+
+	print_one_blocksize(count, times, blocksize);
+	*min_time = ns_min(count, times);
+
+	return 0;
+}
+
 static int try_intervals(struct device *dev)
 {
 	const int count = 128;
 	const off_t rounds = 12;
-	ns_t times[count];
+	ns_t min[rounds];
+	off_t bytes[rounds];
 	int i;
 
 	for (i=0; i<rounds; i++) {
-		char min[8], avg[8], max[8];
-		long blocksize = 512l << i;
-		int ret;
+		bytes[i] = 512l << i;
+		try_interval(dev, bytes[i], &min[i], count);
 
-		ret = time_read_interval(dev, count, blocksize, times);
-		if (ret < 0)
-			return ret;
-
-		format_ns(min, ns_min(count, times));
-		format_ns(avg, ns_avg(count, times));
-		format_ns(max, ns_max(count, times));
-
-		printf("%ld bytes: min %s avg %s max %s: %g MB/s\n", blocksize,
-			 min, avg, max, blocksize / (ns_min(count, times) / 1000.0));
-
-		ret = time_read_linear(dev, count, blocksize, times);
-		if (ret < 0)
-			return ret;
-
-		format_ns(min, ns_min(count, times));
-		format_ns(avg, ns_avg(count, times));
-		format_ns(max, ns_max(count, times));
-
-		printf("%ld bytes: min %s avg %s max %s: %g MB/s\n", blocksize,
-			 min, avg, max, blocksize / (ns_min(count, times) / 1000.0));
 	}
+
+	regression(min, bytes, rounds);
 
 	return 0;
 }
@@ -263,14 +295,12 @@ int main(int argc, char **argv)
 
 	{
 		int ret;
-
 		ret = try_read_cache(&dev);
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_read_cache");
 			return ret;
 		}
-
 		ret = try_intervals(&dev);
 		if (ret < 0) {
 			errno = -ret;
