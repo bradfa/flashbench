@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <sched.h>
 
 typedef long long ns_t;
 struct device {
@@ -162,13 +163,35 @@ static ns_t time_write(struct device *dev, off_t pos, size_t size)
 	return get_ns() - now;
 }
 
+static void flush_read_cache(struct device *dev)
+{
+	off_t cache_size = 1024 * 1024; /* FIXME: use detected size */
+
+	time_read(dev, 2 * cache_size, dev->size - 2 * cache_size);
+}
+
 static int time_read_interval(struct device *dev, int count, size_t size, ns_t results[])
 {
 	int i;
 	off_t pos;
 
 	for (i=0; i < count; i++) {
-		pos = i * size * 2; /* every other block */
+		pos = i * size * 8; /* every other block */
+		results[i] = time_read(dev, pos, size);
+		if (results[i] < 0)
+			return results[i];
+	}
+
+	return 0;
+}
+
+static int time_read_interval_unaligned(struct device *dev, int count, size_t size, ns_t results[])
+{
+	int i;
+	off_t pos;
+
+	for (i=0; i < count; i++) {
+		pos = i * size * 8 + size / 2; /* every other block, half a block off */
 		results[i] = time_read(dev, pos, size);
 		if (results[i] < 0)
 			return results[i];
@@ -280,6 +303,61 @@ static int try_intervals(struct device *dev)
 	return 0;
 }
 
+static int try_align(struct device *dev)
+{
+	const int rounds = 14;
+	const int count = 16;
+	int i;
+
+	ns_t aligned[rounds];
+	ns_t unaligned[rounds];
+
+	for (i=0; i<rounds; i++) {
+		off_t blocksize = 512l << (i + 1);
+		ns_t times[count];
+		char buf_a[8], buf_u[8];
+		ns_t avg_a, avg_u;
+		int ret;
+
+		flush_read_cache(dev);
+
+		ret = time_read_interval(dev, count, blocksize, times);
+		if (ret < 0)
+			return ret;
+
+		aligned[i] = ns_min(count, times);
+		avg_a = ns_avg(count, times);
+
+		ret = time_read_interval_unaligned(dev, count, blocksize, times);
+		if (ret < 0)
+			return ret;
+
+		unaligned[i] = ns_min(count, times);
+		avg_u = ns_avg(count, times);
+
+		format_ns(buf_a, aligned[i]);
+		format_ns(buf_u, unaligned[i]);
+
+		printf("%ld bytes: aligned %s unaligned %s diff %lld, %02g%% min %02g%% avg\n",
+			blocksize, buf_a, buf_u, unaligned[i] - aligned[i],
+			 100.0 * (unaligned[i] - aligned[i]) / aligned[i],
+			 100.0 * (avg_u - avg_a) / avg_a);
+	}
+
+	return 0;
+}
+
+void try_set_rtprio(void)
+{
+	int ret;
+	struct sched_param p = {
+		.sched_priority = 10,
+	};
+	ret = sched_setscheduler(0, SCHED_FIFO, &p);
+	if (ret)
+		perror("sched_setscheduler");
+}
+
 int main(int argc, char **argv)
 {
 	struct device dev;
@@ -301,26 +379,35 @@ int main(int argc, char **argv)
 		return -errno;
 	}
 
+	try_set_rtprio();
+
 	printf("filename: \"%s\"\n", argv[1]);
 	printf("filesize: 0x%llx\n", (unsigned long long)dev.size);
 
 	{
 		int ret;
-#if 1
+
+		ret = try_align(&dev);
+		if (ret < 0) {
+			errno = -ret;
+			perror("try_align");
+			return ret;
+		}
+
+#if 0
 		ret = try_read_cache(&dev);
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_read_cache");
 			return ret;
 		}
-#endif
 		ret = try_intervals(&dev);
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_intervals");
 			return ret;
 		}
-
+#endif
 	}
 
 	return 0;
