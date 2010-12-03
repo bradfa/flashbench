@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <sched.h>
+#include <string.h>
 
 typedef long long ns_t;
 struct device {
@@ -279,7 +280,7 @@ static int try_interval(struct device *dev, long blocksize, ns_t *min_time, int 
 static int try_intervals(struct device *dev)
 {
 	const int count = 32;
-	const off_t rounds = 12;
+	const off_t rounds = 11;
 	const int ignore = 3;
 	ns_t min[rounds];
 	off_t bytes[rounds];
@@ -305,7 +306,7 @@ static int try_intervals(struct device *dev)
 
 static int try_align(struct device *dev)
 {
-	const int rounds = 14;
+	const int rounds = 11;
 	const int count = 16;
 	int i;
 
@@ -347,7 +348,55 @@ static int try_align(struct device *dev)
 	return 0;
 }
 
-void try_set_rtprio(void)
+static int lfsr12(unsigned short v)
+{
+	unsigned short bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 8) ) & 1;
+	return v >> 1 | bit << 11;
+}
+
+static int lfsr14(unsigned short v)
+{
+	unsigned short bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 12) ) & 1;
+	return v >> 1 | bit << 13;
+}
+
+static int lfsr16(unsigned short v)
+{
+	unsigned short bit = ((v >> 0) ^ (v >> 2) ^ (v >> 3) ^ (v >> 5) ) & 1;
+	return v >> 1 | bit << 15;
+}
+
+static int try_scatter_io(struct device *dev)
+{
+	int i, j;
+	const int count = 16384;
+	const int tries = 4;
+	ns_t time;
+	ns_t min[count];
+	unsigned long pos;
+
+	memset(min, 0, sizeof(min));
+	for (i = 0; i < tries; i++) {
+		pos = 0xce1;
+		for (j = 0; j < count; j++) {
+			pos = lfsr14(pos);
+			time = time_read(dev, (pos * 4096), 8192);
+			if (time < 0)
+				return time;
+
+			if (i == 0 || time < min[pos])
+				min[pos] = time;
+		}
+	}
+
+	for (j = 0; j < count; j++) {
+		printf("%ld	%lld\n", j * 4096, min[j]);
+	}
+
+	return 0;
+}
+
+static void try_set_rtprio(void)
 {
 	int ret;
 	struct sched_param p = {
@@ -362,11 +411,13 @@ int main(int argc, char **argv)
 {
 	struct device dev;
 
+	try_set_rtprio();
+
 	if (argc < 2) {
 		fprintf(stderr, "%s: need arguments\n", argv[0]);
 		return -EINVAL;
 	}
-	
+
 	dev.fd = open(argv[1], O_RDWR | O_DIRECT | O_SYNC | O_NOATIME);
 	if (dev.fd < 0) {
 		perror("open");
@@ -378,15 +429,20 @@ int main(int argc, char **argv)
 		perror("seek");
 		return -errno;
 	}
-
-	try_set_rtprio();
-
+/*
 	printf("filename: \"%s\"\n", argv[1]);
 	printf("filesize: 0x%llx\n", (unsigned long long)dev.size);
-
+*/
 	{
 		int ret;
 
+		ret = try_scatter_io(&dev);
+		if (ret < 0) {
+			errno = -ret;
+			perror("try_scatter_io");
+			return ret;
+		}
+#if 0
 		ret = try_align(&dev);
 		if (ret < 0) {
 			errno = -ret;
@@ -394,7 +450,6 @@ int main(int argc, char **argv)
 			return ret;
 		}
 
-#if 0
 		ret = try_read_cache(&dev);
 		if (ret < 0) {
 			errno = -ret;
