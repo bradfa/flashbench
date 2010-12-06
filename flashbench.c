@@ -14,12 +14,16 @@
 #include <limits.h>
 #include <sched.h>
 #include <string.h>
+#include <getopt.h>
+#include <stdbool.h>
 
 typedef long long ns_t;
 struct device {
 	int fd;
 	ssize_t size;
 };
+
+#define returnif(x) do { int __x = (x); if (__x < 0) return (__x); } while (0)
 
 static inline ns_t time_to_ns(struct timespec *ts)
 {
@@ -84,7 +88,7 @@ static void format_ns(char *out, ns_t ns)
 	}
 }
 
-static void print_ns(ns_t ns)
+static inline void print_ns(ns_t ns)
 {
 	char buf[8];
 	format_ns(buf, ns);
@@ -141,6 +145,7 @@ static ns_t time_read(struct device *dev, off_t pos, size_t size)
 	return get_ns() - now;
 }
 
+#if 0
 static ns_t time_write(struct device *dev, off_t pos, size_t size)
 {
 	static char writebuf[64 * 1024 * 1024] __attribute__((aligned(4096)));
@@ -163,6 +168,7 @@ static ns_t time_write(struct device *dev, off_t pos, size_t size)
 
 	return get_ns() - now;
 }
+#endif
 
 static void flush_read_cache(struct device *dev)
 {
@@ -179,8 +185,7 @@ static int time_read_interval(struct device *dev, int count, size_t size, ns_t r
 	for (i=0; i < count; i++) {
 		pos = i * size * 8; /* every other block */
 		results[i] = time_read(dev, pos, size);
-		if (results[i] < 0)
-			return results[i];
+		returnif (results[i] < 0);
 	}
 
 	return 0;
@@ -194,8 +199,7 @@ static int time_read_interval_unaligned(struct device *dev, int count, size_t si
 	for (i=0; i < count; i++) {
 		pos = i * size * 8 + size / 2; /* every other block, half a block off */
 		results[i] = time_read(dev, pos, size);
-		if (results[i] < 0)
-			return results[i];
+		returnif (results[i] < 0);
 	}
 
 	return 0;
@@ -209,8 +213,7 @@ static int time_read_linear(struct device *dev, int count, size_t size, ns_t res
 	for (i=0; i < count; i++) {
 		pos = (count - i) * size; /* every other block */
 		results[i] = time_read(dev, pos, size);
-		if (results[i] < 0)
-			return results[i];
+		returnif (results[i] < 0);
 	}
 
 	return 0;
@@ -234,8 +237,7 @@ static int try_read_cache(struct device *dev)
 			ns_t ns;
 			ns = time_read(dev, 1024 * 1024 * 1024, blocksize);
 
-			if (ns < 0)
-				return ns;
+			returnif (ns);
 
 			if (ns < times[i])
 				times[i] = ns;
@@ -268,8 +270,7 @@ static int try_interval(struct device *dev, long blocksize, ns_t *min_time, int 
 	ns_t times[count];
 
 	ret = time_read_linear(dev, count, blocksize, times);
-	if (ret < 0)
-		return ret;
+	returnif (ret);
 
 	print_one_blocksize(count, times, blocksize);
 	*min_time = ns_min(count, times);
@@ -323,15 +324,13 @@ static int try_align(struct device *dev)
 		flush_read_cache(dev);
 
 		ret = time_read_interval(dev, count, blocksize, times);
-		if (ret < 0)
-			return ret;
+		returnif (ret);
 
 		aligned[i] = ns_min(count, times);
 		avg_a = ns_avg(count, times);
 
 		ret = time_read_interval_unaligned(dev, count, blocksize, times);
-		if (ret < 0)
-			return ret;
+		returnif (ret);
 
 		unaligned[i] = ns_min(count, times);
 		avg_u = ns_avg(count, times);
@@ -347,7 +346,7 @@ static int try_align(struct device *dev)
 
 	return 0;
 }
-
+#if 0
 static int lfsr12(unsigned short v)
 {
 	unsigned short bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 8) ) & 1;
@@ -365,6 +364,52 @@ static int lfsr16(unsigned short v)
 	unsigned short bit = ((v >> 0) ^ (v >> 2) ^ (v >> 3) ^ (v >> 5) ) & 1;
 	return v >> 1 | bit << 15;
 }
+#endif
+
+/*
+ * Linear feedback shift register
+ *
+ * We use this to randomize the block positions for random-access
+ * tests. Unlike real random data, we know that within 2^bits
+ * accesses, every possible value up to 2^bits will be seen
+ * exactly once, with the exception of zero, for which we have
+ * a special treatment.
+ */
+static int lfsr(unsigned short v, unsigned int bits)
+{
+	unsigned short bit;
+
+	if (v >= (1 << bits)) {
+		fprintf(stderr, "flashbench: internal error\n");
+		exit(-EINVAL);
+	}
+
+	if (v == 0)
+		v = ((1 << bits) - 1) & 0xace1;
+
+	switch (bits) {
+	case 12:
+		bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 8) ) & 1;
+		break;
+	case 13: /* x^13 + x^12 + x^11 + x^8 + 1 */
+		bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 5) ) & 1;
+		break;
+	case 14: /* x^14 + x^13 + x^12 + x^2 + 1 */
+		bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 12) ) & 1;
+		break;
+	case 15: /* x^15 + x^14 + 1 */
+		bit = ((v >> 0) ^ (v >> 1) ) & 1;
+		break;
+	case 16: /* x^16 + x^14 + x^13 + x^11 + 1 */
+		bit = ((v >> 0) ^ (v >> 2) ^ (v >> 3) ^ (v >> 5) ) & 1;
+		break;
+	default:
+		fprintf(stderr, "flashbench: internal error\n");
+		exit(-EINVAL);
+	}
+
+	return v >> 1 | bit << (bits - 1);
+}
 
 static int try_scatter_io(struct device *dev)
 {
@@ -379,10 +424,9 @@ static int try_scatter_io(struct device *dev)
 	for (i = 0; i < tries; i++) {
 		pos = 0xce1;
 		for (j = 0; j < count; j++) {
-			pos = lfsr14(pos);
+			pos = lfsr(pos, 14);
 			time = time_read(dev, (pos * 4096), 8192);
-			if (time < 0)
-				return time;
+			returnif (time);
 
 			if (i == 0 || time < min[pos])
 				min[pos] = time;
@@ -390,7 +434,7 @@ static int try_scatter_io(struct device *dev)
 	}
 
 	for (j = 0; j < count; j++) {
-		printf("%ld	%lld\n", j * 4096, min[j]);
+		printf("%d	%lld\n", j * 4096, min[j]);
 	}
 
 	return 0;
@@ -407,62 +451,168 @@ static void try_set_rtprio(void)
 		perror("sched_setscheduler");
 }
 
-int main(int argc, char **argv)
+static void print_help(const char *name)
 {
-	struct device dev;
+	printf("%s [OPTION]... [DEVICE]\n", name);
+	printf("run tests on DEVICE, pointing to a flash storage medium.\n\n");
+	printf("-o, --out=FILE	write output to FILE instead of stdout\n");
+	printf("-s, --scatter	run scatter read test\n");
+	printf("-r, --rcache	determine read cache size\n");
+	printf("-v, --verbose	increase verbosity of output\n");
+	printf("-c, --count=N	run each test N times (default: 8\n");	
+}
 
-	try_set_rtprio();
+struct arguments {
+	const char *dev;
+	const char *out;
+	bool scatter, rcache, align, interval;
+	int verbosity;
+	int count;
+};
 
-	if (argc < 2) {
-		fprintf(stderr, "%s: need arguments\n", argv[0]);
+static int parse_arguments(int argc, char **argv, struct arguments *args)
+{
+	static const struct option long_options[] = {
+		{ "out", 1, NULL, 'o' },
+		{ "scatter", 0, NULL, 's' },
+		{ "rcache", 0, NULL, 'r' },
+		{ "align", 0, NULL, 'a' },
+		{ "interval", 0, NULL, 'i' },
+		{ "verbose", 0, NULL, 'v' },
+		{ "count", 1, NULL, 'c' },
+		{ NULL, 0, NULL, 0 },
+	};
+
+	memset(args, 0, sizeof(*args));
+	args->count = 8;
+
+	while (1) {
+		int c;
+
+		c = getopt_long(argc, argv, "o:srai", long_options, &optind);
+
+		if (c == -1)
+			break;
+
+		switch (c) {
+		case 'o':
+			args->out = optarg;
+			break;
+
+		case 's':
+			args->scatter = 1;
+			break;
+
+		case 'r':
+			args->rcache = 1;
+			break;
+
+		case 'a':
+			args->align = 1;
+			break;
+
+		case 'i':
+			args->interval = 1;
+			break;
+
+		case 'v':
+			args->verbosity++;
+			break;
+
+		case 'c':
+			args->count = atoi(optarg);
+			break;
+
+		case '?':
+			print_help(argv[0]);
+			return -EINVAL;
+			break;
+		}
+	}
+
+	if (optind != (argc - 1))  {
+		fprintf(stderr, "%s: invalid arguments\n", argv[0]);
 		return -EINVAL;
 	}
 
-	dev.fd = open(argv[1], O_RDWR | O_DIRECT | O_SYNC | O_NOATIME);
-	if (dev.fd < 0) {
+	args->dev = argv[optind];
+
+	if (!(args->scatter || args->rcache ||
+	      args->align || args->interval)) {
+		fprintf(stderr, "%s: need at least one action\n", argv[0]);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int setup_dev(struct device *dev, struct arguments *args)
+{
+	try_set_rtprio();
+
+	dev->fd = open(args->dev, O_RDWR | O_DIRECT | O_SYNC | O_NOATIME);
+	if (dev->fd < 0) {
 		perror("open");
 		return -errno;
 	}
 
-	dev.size = lseek(dev.fd, 0, SEEK_END);
-	if (dev.size < 0) {
+	dev->size = lseek(dev->fd, 0, SEEK_END);
+	if (dev->size < 0) {
 		perror("seek");
 		return -errno;
 	}
-/*
-	printf("filename: \"%s\"\n", argv[1]);
-	printf("filesize: 0x%llx\n", (unsigned long long)dev.size);
-*/
-	{
-		int ret;
 
+	return 0;
+}
+
+int main(int argc, char **argv)
+{
+	struct device dev;
+	struct arguments args;
+	int ret;
+
+	returnif(parse_arguments(argc, argv, &args));
+
+	returnif(setup_dev(&dev, &args));
+	if (args.verbosity) {
+		printf("filename: \"%s\"\n", argv[1]);
+		printf("filesize: 0x%llx\n", (unsigned long long)dev.size);
+	}
+
+	if (args.scatter) {
 		ret = try_scatter_io(&dev);
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_scatter_io");
 			return ret;
 		}
-#if 0
+	}
+
+	if (args.align) {
 		ret = try_align(&dev);
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_align");
 			return ret;
 		}
+	}
 
+	if (args.rcache) {
 		ret = try_read_cache(&dev);
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_read_cache");
 			return ret;
 		}
+	}
+
+	if (args.interval) {
 		ret = try_intervals(&dev);
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_intervals");
 			return ret;
 		}
-#endif
 	}
 
 	return 0;
