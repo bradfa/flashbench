@@ -411,21 +411,20 @@ static int lfsr(unsigned short v, unsigned int bits)
 	return v >> 1 | bit << (bits - 1);
 }
 
-static int try_scatter_io(struct device *dev)
+static int try_scatter_io(struct device *dev, int tries, int scatter_order, int blocksize, FILE *out)
 {
 	int i, j;
-	const int count = 16384;
-	const int tries = 4;
+	const int count = 1 << scatter_order;
 	ns_t time;
 	ns_t min[count];
 	unsigned long pos;
 
 	memset(min, 0, sizeof(min));
 	for (i = 0; i < tries; i++) {
-		pos = 0xce1;
+		pos = 0;
 		for (j = 0; j < count; j++) {
-			pos = lfsr(pos, 14);
-			time = time_read(dev, (pos * 4096), 8192);
+			pos = lfsr(pos, scatter_order);
+			time = time_read(dev, (pos * blocksize), 2 * blocksize);
 			returnif (time);
 
 			if (i == 0 || time < min[pos])
@@ -434,7 +433,7 @@ static int try_scatter_io(struct device *dev)
 	}
 
 	for (j = 0; j < count; j++) {
-		printf("%d	%lld\n", j * 4096, min[j]);
+		fprintf(out, "%d	%lld\n", j * blocksize, min[j]);
 	}
 
 	return 0;
@@ -457,6 +456,7 @@ static void print_help(const char *name)
 	printf("run tests on DEVICE, pointing to a flash storage medium.\n\n");
 	printf("-o, --out=FILE	write output to FILE instead of stdout\n");
 	printf("-s, --scatter	run scatter read test\n");
+	printf("    --scatter-order=N scatter across 2^N blocks\n");
 	printf("-r, --rcache	determine read cache size\n");
 	printf("-v, --verbose	increase verbosity of output\n");
 	printf("-c, --count=N	run each test N times (default: 8\n");	
@@ -468,6 +468,8 @@ struct arguments {
 	bool scatter, rcache, align, interval;
 	int verbosity;
 	int count;
+	int blocksize;
+	int scatter_order;
 };
 
 static int parse_arguments(int argc, char **argv, struct arguments *args)
@@ -475,6 +477,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 	static const struct option long_options[] = {
 		{ "out", 1, NULL, 'o' },
 		{ "scatter", 0, NULL, 's' },
+		{ "scatter-order", 1, NULL, 'S' },
 		{ "rcache", 0, NULL, 'r' },
 		{ "align", 0, NULL, 'a' },
 		{ "interval", 0, NULL, 'i' },
@@ -485,6 +488,8 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 
 	memset(args, 0, sizeof(*args));
 	args->count = 8;
+	args->scatter_order = 14;
+	args->blocksize = 8192;
 
 	while (1) {
 		int c;
@@ -501,6 +506,10 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 
 		case 's':
 			args->scatter = 1;
+			break;
+
+		case 'S':
+			args->scatter_order = atoi(optarg);
 			break;
 
 		case 'r':
@@ -543,6 +552,11 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 		return -EINVAL;
 	}
 
+	if (args->scatter && (args->scatter_order > 16)) {
+		fprintf(stderr, "%s: scatter_order must be at most 16\n", argv[0]);
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
@@ -565,22 +579,38 @@ static int setup_dev(struct device *dev, struct arguments *args)
 	return 0;
 }
 
+static FILE *open_output(const char *filename)
+{
+	if (!filename || !strcmp(filename, "-"))
+		return fdopen(0, "w"); /* write to stdout */
+
+	return fopen(filename, "w+");
+}
+
 int main(int argc, char **argv)
 {
 	struct device dev;
 	struct arguments args;
+	FILE *output;
 	int ret;
 
 	returnif(parse_arguments(argc, argv, &args));
 
 	returnif(setup_dev(&dev, &args));
+
+	output = open_output(args.out);
+	if (!output) {
+		perror(args.out);
+		return -errno;
+	}
+
 	if (args.verbosity) {
 		printf("filename: \"%s\"\n", argv[1]);
 		printf("filesize: 0x%llx\n", (unsigned long long)dev.size);
 	}
 
 	if (args.scatter) {
-		ret = try_scatter_io(&dev);
+		ret = try_scatter_io(&dev, args.count, args.scatter_order, args.blocksize, output);
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_scatter_io");
