@@ -23,7 +23,7 @@ struct device {
 	ssize_t size;
 };
 
-#define returnif(x) do { int __x = (x); if (__x < 0) return (__x); } while (0)
+#define returnif(x) do { typeof(x) __x = (x); if (__x < 0) return (__x); } while (0)
 
 static inline ns_t time_to_ns(struct timespec *ts)
 {
@@ -49,6 +49,18 @@ static ns_t ns_min(int count, ns_t data[])
 
 	return min;
 }
+
+#if 0
+static void ns_min_elements(int count, ns_t target[], ns_t new[])
+{
+	int i;
+
+	for (i=0; i<count; i++) {
+		if (new[i] < target[i] || target[i] == 0)
+			target[i] = new[i];
+	}
+}
+#endif
 
 static ns_t ns_max(int count, ns_t data[])
 {
@@ -177,43 +189,20 @@ static void flush_read_cache(struct device *dev)
 	time_read(dev, 2 * cache_size, dev->size - 2 * cache_size);
 }
 
-static int time_read_interval(struct device *dev, int count, size_t size, ns_t results[])
+static int time_read_interval(struct device *dev, int count, ns_t results[],
+				 size_t size, off_t offset, off_t interval)
 {
 	int i;
 	off_t pos;
+	ns_t ret;
 
 	for (i=0; i < count; i++) {
-		pos = i * size * 8; /* every other block */
-		results[i] = time_read(dev, pos, size);
-		returnif (results[i] < 0);
-	}
+		pos = offset + i * interval;
+		ret = time_read(dev, pos, size);
+		returnif (ret < 0);
 
-	return 0;
-}
-
-static int time_read_interval_unaligned(struct device *dev, int count, size_t size, ns_t results[])
-{
-	int i;
-	off_t pos;
-
-	for (i=0; i < count; i++) {
-		pos = i * size * 8 + size / 2; /* every other block, half a block off */
-		results[i] = time_read(dev, pos, size);
-		returnif (results[i] < 0);
-	}
-
-	return 0;
-}
-
-static int time_read_linear(struct device *dev, int count, size_t size, ns_t results[])
-{
-	int i;
-	off_t pos;
-
-	for (i=0; i < count; i++) {
-		pos = (count - i) * size; /* every other block */
-		results[i] = time_read(dev, pos, size);
-		returnif (results[i] < 0);
+		if (results[i] == 0 || results[i] > ret)
+			results[i] = ret;
 	}
 
 	return 0;
@@ -268,8 +257,9 @@ static int try_interval(struct device *dev, long blocksize, ns_t *min_time, int 
 {
 	int ret;
 	ns_t times[count];
+	memset(times, 0, sizeof(times));
 
-	ret = time_read_linear(dev, count, blocksize, times);
+	ret = time_read_interval(dev, count, times, blocksize, 0, blocksize * 9);
 	returnif (ret);
 
 	print_one_blocksize(count, times, blocksize);
@@ -321,13 +311,15 @@ static int try_align(struct device *dev)
 
 		flush_read_cache(dev);
 
-		ret = time_read_interval(dev, count, blocksize, times);
+		memset(times, 0, sizeof(times));
+		ret = time_read_interval(dev, count, times, blocksize, 0, blocksize * 8);
 		returnif (ret);
 
 		aligned[i] = ns_min(count, times);
 		avg_a = ns_avg(count, times);
 
-		ret = time_read_interval_unaligned(dev, count, blocksize, times);
+		memset(times, 0, sizeof(times));
+		ret = time_read_interval(dev, count, times, blocksize, blocksize / 2, blocksize * 8);
 		returnif (ret);
 
 		unaligned[i] = ns_min(count, times);
@@ -344,25 +336,6 @@ static int try_align(struct device *dev)
 
 	return 0;
 }
-#if 0
-static int lfsr12(unsigned short v)
-{
-	unsigned short bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 8) ) & 1;
-	return v >> 1 | bit << 11;
-}
-
-static int lfsr14(unsigned short v)
-{
-	unsigned short bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 12) ) & 1;
-	return v >> 1 | bit << 13;
-}
-
-static int lfsr16(unsigned short v)
-{
-	unsigned short bit = ((v >> 0) ^ (v >> 2) ^ (v >> 3) ^ (v >> 5) ) & 1;
-	return v >> 1 | bit << 15;
-}
-#endif
 
 /*
  * Linear feedback shift register
@@ -437,6 +410,58 @@ static int try_scatter_io(struct device *dev, int tries, int scatter_order, int 
 	return 0;
 }
 
+static int try_read_alignment(struct device *dev, int tries, int count,
+				off_t maxalign, off_t align, size_t blocksize)
+{
+	ns_t pre[count], on[count], post[count];
+	char pre_s[8], on_s[8], post_s[8], diff_s[8];
+	int i, ret;
+
+	memset(pre, 0, sizeof(pre));
+	memset(on, 0, sizeof(on));
+	memset(post, 0, sizeof(post));
+
+	for (i = 0; i < tries; i++) {
+		ret = time_read_interval(dev, count, pre, blocksize,
+					 align - blocksize, maxalign);
+		returnif(ret);
+
+		ret = time_read_interval(dev, count, on, blocksize,
+					 align - blocksize / 2, maxalign);
+		returnif(ret);
+
+		ret = time_read_interval(dev, count, post, blocksize,
+					 align, maxalign);
+		returnif(ret);
+	}
+
+	format_ns(pre_s,  ns_avg(count, pre));
+	format_ns(on_s,   ns_avg(count, on));
+	format_ns(post_s, ns_avg(count, post));
+	format_ns(diff_s, ns_avg(count, on) - (ns_avg(count, pre) + ns_avg(count, post)) / 2);
+	printf("align %ld\tpre %s\ton %s\tpost %s\tdiff %s\n", align, pre_s, on_s, post_s, diff_s);
+
+	return 0;
+}
+
+static int try_read_alignments(struct device *dev, int tries, int blocksize)
+{
+	const int count = 32;
+	int ret;
+	off_t align, maxalign;
+
+	/* make sure we can fit eight power-of-two blocks in the device */
+	for (maxalign = blocksize * 2; maxalign < dev->size / count; maxalign *= 2)
+		;
+
+	for (align = maxalign; align >= blocksize * 2; align /= 2) {
+		ret = try_read_alignment(dev, tries, count, maxalign, align, blocksize);
+		returnif (ret);
+	}
+
+	return 0;
+}
+
 static void set_rtprio(void)
 {
 	int ret;
@@ -483,6 +508,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 		{ "interval-order", 0, NULL, 'I' },
 		{ "verbose", 0, NULL, 'v' },
 		{ "count", 1, NULL, 'c' },
+		{ "blocksize", 1, NULL, 'b' },
 		{ NULL, 0, NULL, 0 },
 	};
 
@@ -494,7 +520,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 	while (1) {
 		int c;
 
-		c = getopt_long(argc, argv, "o:sraivc", long_options, &optind);
+		c = getopt_long(argc, argv, "o:sraivc:b:", long_options, &optind);
 
 		if (c == -1)
 			break;
@@ -534,6 +560,10 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 
 		case 'c':
 			args->count = atoi(optarg);
+			break;
+
+		case 'b':
+			args->blocksize = atoi(optarg);
 			break;
 
 		case '?':
@@ -623,7 +653,7 @@ int main(int argc, char **argv)
 	}
 
 	if (args.align) {
-		ret = try_align(&dev);
+		ret = try_read_alignments(&dev, args.count, args.blocksize);
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_align");
