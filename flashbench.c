@@ -278,10 +278,8 @@ static int try_interval(struct device *dev, long blocksize, ns_t *min_time, int 
 	return 0;
 }
 
-static int try_intervals(struct device *dev)
+static int try_intervals(struct device *dev, int count, int rounds)
 {
-	const int count = 32;
-	const off_t rounds = 11;
 	const int ignore = 3;
 	ns_t min[rounds];
 	off_t bytes[rounds];
@@ -439,7 +437,7 @@ static int try_scatter_io(struct device *dev, int tries, int scatter_order, int 
 	return 0;
 }
 
-static void try_set_rtprio(void)
+static void set_rtprio(void)
 {
 	int ret;
 	struct sched_param p = {
@@ -470,6 +468,7 @@ struct arguments {
 	int count;
 	int blocksize;
 	int scatter_order;
+	int interval_order;
 };
 
 static int parse_arguments(int argc, char **argv, struct arguments *args)
@@ -481,6 +480,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 		{ "rcache", 0, NULL, 'r' },
 		{ "align", 0, NULL, 'a' },
 		{ "interval", 0, NULL, 'i' },
+		{ "interval-order", 0, NULL, 'I' },
 		{ "verbose", 0, NULL, 'v' },
 		{ "count", 1, NULL, 'c' },
 		{ NULL, 0, NULL, 0 },
@@ -494,7 +494,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 	while (1) {
 		int c;
 
-		c = getopt_long(argc, argv, "o:srai", long_options, &optind);
+		c = getopt_long(argc, argv, "o:sraivc", long_options, &optind);
 
 		if (c == -1)
 			break;
@@ -522,6 +522,10 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 
 		case 'i':
 			args->interval = 1;
+			break;
+
+		case 'I':
+			args->interval_order = atoi(optarg);
 			break;
 
 		case 'v':
@@ -562,7 +566,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 
 static int setup_dev(struct device *dev, struct arguments *args)
 {
-	try_set_rtprio();
+	set_rtprio();
 
 	dev->fd = open(args->dev, O_RDWR | O_DIRECT | O_SYNC | O_NOATIME);
 	if (dev->fd < 0) {
@@ -637,7 +641,7 @@ int main(int argc, char **argv)
 	}
 
 	if (args.interval) {
-		ret = try_intervals(&dev);
+		ret = try_intervals(&dev, args.count, args.interval_order);
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_intervals");
