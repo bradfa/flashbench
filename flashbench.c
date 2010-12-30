@@ -199,7 +199,7 @@ static int time_read_interval(struct device *dev, int count, ns_t results[],
 	for (i=0; i < count; i++) {
 		pos = offset + i * interval;
 		ret = time_read(dev, pos, size);
-		returnif (ret < 0);
+		returnif (ret);
 
 		if (results[i] == 0 || results[i] > ret)
 			results[i] = ret;
@@ -359,14 +359,26 @@ static int lfsr(unsigned short v, unsigned int bits)
 		v = ((1 << bits) - 1) & 0xace1;
 
 	switch (bits) {
+	case 8: /* x^8 + x^6 + x^5 + x^4 + 1 */
+		bit = ((v >> 0) ^ (v >> 2) ^ (v >> 3) ^ (v >> 4)) & 1;
+		break;
+	case 9: /* x9 + x5 + 1 */
+		bit = ((v >> 0) ^ (v >> 4)) & 1;
+		break;
+	case 10: /* x10 + x7 + 1 */
+		bit = ((v >> 0) ^ (v >> 3)) & 1;
+		break;
+	case 11: /* x11 + x9 + 1 */
+		bit = ((v >> 0) ^ (v >> 2)) & 1;
+		break;
 	case 12:
-		bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 8) ) & 1;
+		bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 8)) & 1;
 		break;
 	case 13: /* x^13 + x^12 + x^11 + x^8 + 1 */
-		bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 5) ) & 1;
+		bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 5)) & 1;
 		break;
 	case 14: /* x^14 + x^13 + x^12 + x^2 + 1 */
-		bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 12) ) & 1;
+		bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 12)) & 1;
 		break;
 	case 15: /* x^15 + x^14 + 1 */
 		bit = ((v >> 0) ^ (v >> 1) ) & 1;
@@ -382,7 +394,8 @@ static int lfsr(unsigned short v, unsigned int bits)
 	return v >> 1 | bit << (bits - 1);
 }
 
-static int try_scatter_io(struct device *dev, int tries, int scatter_order, int blocksize, FILE *out)
+static int try_scatter_io(struct device *dev, int tries, int scatter_order,
+			int scatter_span, int blocksize, FILE *out)
 {
 	int i, j;
 	const int count = 1 << scatter_order;
@@ -394,12 +407,13 @@ static int try_scatter_io(struct device *dev, int tries, int scatter_order, int 
 	for (i = 0; i < tries; i++) {
 		pos = 0;
 		for (j = 0; j < count; j++) {
-			pos = lfsr(pos, scatter_order);
-			time = time_read(dev, (pos * blocksize), 2 * blocksize);
+			time = time_read(dev, (pos * blocksize), scatter_span * blocksize);
 			returnif (time);
 
 			if (i == 0 || time < min[pos])
 				min[pos] = time;
+
+			pos = lfsr(pos, scatter_order);
 		}
 	}
 
@@ -493,6 +507,7 @@ struct arguments {
 	int count;
 	int blocksize;
 	int scatter_order;
+	int scatter_span;
 	int interval_order;
 };
 
@@ -502,6 +517,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 		{ "out", 1, NULL, 'o' },
 		{ "scatter", 0, NULL, 's' },
 		{ "scatter-order", 1, NULL, 'S' },
+		{ "scatter-span", 1, NULL, '$' },
 		{ "rcache", 0, NULL, 'r' },
 		{ "align", 0, NULL, 'a' },
 		{ "interval", 0, NULL, 'i' },
@@ -514,7 +530,8 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 
 	memset(args, 0, sizeof(*args));
 	args->count = 8;
-	args->scatter_order = 14;
+	args->scatter_order = 12;
+	args->scatter_span = 8;
 	args->blocksize = 8192;
 
 	while (1) {
@@ -536,6 +553,10 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 
 		case 'S':
 			args->scatter_order = atoi(optarg);
+			break;
+
+		case '$':
+			args->scatter_span = atoi(optarg);
 			break;
 
 		case 'r':
@@ -644,7 +665,8 @@ int main(int argc, char **argv)
 	}
 
 	if (args.scatter) {
-		ret = try_scatter_io(&dev, args.count, args.scatter_order, args.blocksize, output);
+		ret = try_scatter_io(&dev, args.count, args.scatter_order,
+				 args.scatter_span, args.blocksize, output);
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_scatter_io");
