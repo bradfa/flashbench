@@ -521,7 +521,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 		{ "rcache", 0, NULL, 'r' },
 		{ "align", 0, NULL, 'a' },
 		{ "interval", 0, NULL, 'i' },
-		{ "interval-order", 0, NULL, 'I' },
+		{ "interval-order", 1, NULL, 'I' },
 		{ "verbose", 0, NULL, 'v' },
 		{ "count", 1, NULL, 'c' },
 		{ "blocksize", 1, NULL, 'b' },
