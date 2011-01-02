@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/types.h>
+#include <stdlib.h>
 
 typedef long long ns_t;
 struct device;
@@ -24,31 +25,41 @@ struct operation {
 
 		/* group */
 		SEQUENCE,
+		REPEAT,
 
 		/* series */
-		LEN_POW2,
 		OFF_FIXED,
 		OFF_POW2,
 		OFF_LIN,
 		OFF_RAND,
+		LEN_POW2,
 		MAX_POW2,
 		MAX_LIN,
+
+		/* reduce dimension */
+		REDUCE,
 
 		/* invalid */
 		MAX_OPCODE,
 	} code;
 
 	unsigned int num;
+
 	long long val;
 	const char *string;
 
-	ns_t *result;
+	unsigned int dim;
+	union {
+		ns_t r1;
+		ns_t *r2;
+		ns_t **r3;
+	} result;
 
 	enum {
-		NOP = 0,
 		MINIMUM,
 		MAXIMUM,
 		AVERAGE,
+		TOTAL,
 		IGNORE,
 	} aggregate;
 };
@@ -115,7 +126,10 @@ static struct operation *print_ns(struct operation *op, struct device *dev,
 
 	op++;
 	next = call(op, dev, off, max, len);
-	printf("%lld", op->result[0]);
+	if (op->dim > 1)
+		return NULL;
+
+	printf("%lld", op->result.r1);
 	return next;
 }
 
@@ -167,6 +181,100 @@ static struct operation *off_lin(struct operation *op, struct device *dev,
 	return next;
 }
 
+static struct operation *repeat(struct operation *op, struct device *dev,
+		 off_t off, off_t max, size_t len)
+{
+	struct operation *next;
+	unsigned int i;
+
+	for (i = 0; i < op->num; i++)
+		next = call(op+1, dev, off, max, len);
+
+	return next;
+}
+
+static ns_t do_reduce1(int num, ns_t *input, int aggregate)
+{
+	int i;
+	ns_t result = 0;
+
+	for (i = 0; i < num; i++) {
+		switch (aggregate) {
+		case MINIMUM:
+			if (!result || result > input[i])
+				result = input[i];
+			break;
+		case MAXIMUM:
+			if (!result || result < input[i])
+				result = input[i];
+			break;
+		case AVERAGE:
+		case TOTAL:
+			result += input[i];
+			break;
+		}
+	}
+
+	if (aggregate == AVERAGE)
+		result /= num;
+
+	return result;
+}
+
+static void do_reduce2(int num_out, ns_t *output,
+			int num_in, ns_t **input,
+			int aggregate)
+{
+	int i, j;
+	ns_t result = 0;
+	
+	for (j = 0; j < num_out; j++) {
+		output[j] = 0;
+		for (i = 0; i < num_in; i++) {
+			switch (aggregate) {
+			case MINIMUM:
+				if (!output[j] || result > input[i][j])
+					output[j] = input[i][j];
+				break;
+			case MAXIMUM:
+				if (!output[j] || result < input[i][j])
+					output[j] = input[i][j];
+				break;
+			case AVERAGE:
+			case TOTAL:
+				output[j] += input[i][j];
+				break;
+			}
+
+		if (aggregate == AVERAGE)
+			output[j] /= num_in;
+		}
+	}
+}
+
+static struct operation *reduce(struct operation *op, struct device *dev,
+		 off_t off, off_t max, size_t len)
+{
+	struct operation *next;
+
+	next = call(op+1, dev, off, max, len);
+
+	switch (op->dim) {
+	case 1:
+		op->result.r1 = do_reduce1(op[1].num, op[1].result.r2,
+						op->aggregate);
+		break;
+	case 2:
+		do_reduce2(op->num, op->result.r2, op[1].num, op[1].result.r3,
+				 op->aggregate);
+		break;
+	default:
+		return NULL;
+	}
+
+	return next;
+}
+
 static struct syntax syntax[] = {
 	{ END,		nop,		0 },
 	{ READ,		do_read,	ATOM },
@@ -174,26 +282,32 @@ static struct syntax syntax[] = {
 	{ WRITE_ONE,	nop,		ATOM },
 	{ WRITE_RAND,	nop,		ATOM },
 	{ ERASE,	nop,		ATOM },
-	{ PRINT,	print,		STRING },
-	{ PRINT_NS,	print_ns,	AGGREGATE },
-	{ PRINT_MBPS,	nop,		AGGREGATE },
-	{ SEQUENCE,	sequence,	NUM },
 
-	{ LEN_POW2,	len_pow2,	NUM | VAL },
+	{ PRINT,	print,		STRING },
+	{ PRINT_NS,	print_ns,	0 },
+	{ PRINT_MBPS,	nop,		0 },
+
+	{ SEQUENCE,	sequence,	NUM },
+	{ REPEAT,	repeat,		NUM },
+
 	{ OFF_FIXED,	off_fixed,	VAL },
 	{ OFF_POW2,	nop,		NUM | VAL },
 	{ OFF_LIN,	off_lin,	NUM | VAL },
 	{ OFF_RAND,	nop,		NUM | VAL },
+	{ LEN_POW2,	len_pow2,	NUM | VAL },
 	{ MAX_POW2,	nop,		NUM | VAL },
 	{ MAX_LIN,	nop,		NUM | VAL },
+
+	{ REDUCE,	reduce,		NUM },
 };
 
 struct operation program[] = {
 	{ SEQUENCE, .num = 3 },
 		{ PRINT, .string = "Hello, World!\n" },
 		{ PRINT_NS },
-			{ LEN_POW2, 1, 4096 },
-				{ OFF_LIN, 1024, 4096 },
+			{ REDUCE, 1024, .dim = 2 },
+			{ LEN_POW2, 4, 4096 },
+				{ OFF_LIN, 1024, 4096, .aggregate = MINIMUM },
 					{ READ },
 		{ PRINT, .string = "\n" },
 		{ END },
