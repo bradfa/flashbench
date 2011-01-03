@@ -115,7 +115,7 @@ struct syntax {
 };
 
 static struct syntax syntax[];
-static int verbose = 1;
+static int verbose = 0;
 #define pr_debug(...) do { if (verbose) printf(__VA_ARGS__); } while(0)
 #define return_err(...) do { printf(__VA_ARGS__); return NULL; } while(0)
 
@@ -124,10 +124,10 @@ static struct operation *call(struct operation *op, struct device *dev,
 {
 	struct operation *next;
 
-	pr_debug("call %s %ld %ld %ld\n", syntax[op->code].name, off, max, len);
-
 	if (!op)
 		return_err("internal error: NULL operation\n");
+
+	pr_debug("call %s %ld %ld %ld\n", syntax[op->code].name, off, max, len);
 
 	if (op->code > O_MAX)
 		return_err("illegal command code %d\n", op->code);
@@ -146,7 +146,7 @@ static struct operation *call(struct operation *op, struct device *dev,
 		if (!data)
 			return_err("out of memory");
 
-		op->result = res_null;
+		op->result = to_res(data, R_NONE);
 		op->r_type = R_ARRAY;
 	}
 
@@ -246,9 +246,11 @@ static struct operation *print_ns(struct operation *op, struct device *dev,
 	struct operation *next;
 
 	next = call_propagate(op+1, dev, off, max, len, op);
+	if (!next)
+		return NULL;
 
 	if (op->size_x || op->size_y || op->r_type != R_NS)
-		return_err("argument to print is not of type ns\n");
+		return_err("argument to print is of type %d, not ns\n", op->r_type);
 
 	printf("%lld", op->result.l);
 	return next;
@@ -260,10 +262,10 @@ static struct operation *sequence(struct operation *op, struct device *dev,
 	unsigned int i;
 	struct operation *next = op+1;
 
-	for (i=0; i<op->num; i++)
+	for (i=0; i<op->num && next; i++)
 		next = call_aggregate(next, dev, off, max, len, op);
 
-	if (next->code != O_END)
+	if (next && next->code != O_END)
 		return_err("sequence needs to end with END command\n");
 
 	return next+1;
@@ -278,8 +280,8 @@ static struct operation *len_pow2(struct operation *op, struct device *dev,
 	if (!len)
 		len = 1;
 
-	for (i = 0; i < op->num; i++)
-		next = call_aggregate(next, dev, off, max, len * op->val << i, op);
+	for (i = 0; i < op->num && next; i++)
+		next = call_aggregate(op+1, dev, off, max, len * op->val << i, op);
 
 	return next;
 }
@@ -296,8 +298,8 @@ static struct operation *off_lin(struct operation *op, struct device *dev,
 	struct operation *next = op+1;
 	unsigned int i;
 
-	for (i = 0; i < op->num; i++)
-		next = call_aggregate(next, dev, off + i * op->val, max, len, op);
+	for (i = 0; i < op->num && next; i++)
+		next = call_aggregate(op+1, dev, off + i * op->val, max, len, op);
 
 	return next;
 }
@@ -308,7 +310,7 @@ static struct operation *repeat(struct operation *op, struct device *dev,
 	struct operation *next = op+1;
 	unsigned int i;
 
-	for (i = 0; i < op->num; i++)
+	for (i = 0; i < op->num && next; i++)
 		next = call_aggregate(op+1, dev, off, max, len, op);
 
 	return next;
@@ -318,7 +320,6 @@ static res_t do_reduce(int num, res_t *input, int aggregate)
 {
 	int i;
 	res_t result = { .l = 0 };
-
 	for (i = 0; i < num; i++) {
 		switch (aggregate) {
 		case A_MINIMUM:
@@ -352,17 +353,20 @@ static struct operation *reduce(struct operation *op, struct device *dev,
 
 	child = op+1;
 	next = call(child, dev, off, max, len);
+	if (!next)
+		return NULL;
 
 	/* single value */
-	if (op->r_type != R_ARRAY || op->size_y == 0)
-		return_err("cannot reduce scalar further\n");
+	if (child->r_type != R_ARRAY || child->size_x == 0)
+		return_err("cannot reduce scalar further, type %d, size %d\n",
+				child->r_type, child->size_y);
 
 	/* data does not fit */
 	if (child->size_y > op->num)
 		return_err("target array too short\n"); /* FIXME: is this necessary? */
 
 	/* one-dimensional array */
-	if (op[1].size_y == 0) {
+	if (child->size_y == 0) {
 		op->result = do_reduce(child->size_x, res_ptr(child->result),
 					op->aggregate);
 		op->size_x = op->size_y = 0;
@@ -377,7 +381,7 @@ static struct operation *reduce(struct operation *op, struct device *dev,
 		return_err("inconsistent array contents\n");
 
 	type = res_type(in[0]);
-	for (i=0; i<child->size_y; i++) {
+	for (i=0; i<child->size_x; i++) {
 		if (res_type(in[i]) != type)
 			return_err("cannot combine type %d and %d\n",
 				 res_type(in[i]), type);
@@ -423,10 +427,11 @@ struct operation program[] = {
 	{ O_SEQUENCE, .num = 3 },
 		{ O_PRINT, .string = "Hello, World!\n" },
 		{ O_PRINT_NS },
-			{ O_REDUCE, 1024 },
-			{ O_LEN_POW2, 4, 4096 },
-				{ O_OFF_LIN, 1024, 4096, .aggregate = A_MINIMUM },
-					{ O_READ },
+			{ O_REDUCE, 8 },
+			{ O_REDUCE, 8 },
+			    { O_LEN_POW2, 4, 4096 },
+				{ O_OFF_LIN, 8, 4096 },//, .aggregate = A_MINIMUM },
+				    { O_READ },
 		{ O_PRINT, .string = "\n" },
 		{ O_END },
 	{ O_END },
