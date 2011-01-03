@@ -3,65 +3,99 @@
 #include <sys/types.h>
 #include <stdlib.h>
 
-typedef long long ns_t;
 struct device;
+
+typedef union result res_t;
+
+enum resulttype {
+	R_NONE,
+	R_ARRAY,
+	R_NS,
+	R_BYTE,
+	R_STRING,
+};
+
+union result {
+	res_t *_p;
+	long long l;
+	char s[8];
+} __attribute__((aligned(8)));
+
+static inline res_t *res_ptr(res_t r)
+{
+	return (res_t *)((unsigned long)r._p & ~7);
+}
+
+static inline enum resulttype res_type(res_t r)
+{
+	return (enum resulttype)((unsigned long)r._p & 7);
+}
+
+static inline res_t to_res(res_t *_p, enum resulttype t)
+{
+	return (res_t) { ._p = (res_t *)(((unsigned long)_p & ~7) | (t & 7)) };
+}
 
 struct operation {
 	enum opcode {
 		/* end of program marker */
-		END = 0,
+		O_END = 0,
 
 		/* basic operations */
-		READ,
-		WRITE_ZERO,
-		WRITE_ONE,
-		WRITE_RAND,
-		ERASE,
+		O_READ,
+		O_WRITE_ZERO,
+		O_WRITE_ONE,
+		O_WRITE_RAND,
+		O_ERASE,
 
 		/* output */
-		PRINT,
-		PRINT_NS,
-		PRINT_MBPS,
+		O_PRINT,
+		O_PRINT_NS,
+		O_PRINT_MBPS,
 
 		/* group */
-		SEQUENCE,
-		REPEAT,
+		O_SEQUENCE,
+		O_REPEAT,
 
 		/* series */
-		OFF_FIXED,
-		OFF_POW2,
-		OFF_LIN,
-		OFF_RAND,
-		LEN_POW2,
-		MAX_POW2,
-		MAX_LIN,
+		O_OFF_FIXED,
+		O_OFF_POW2,
+		O_OFF_LIN,
+		O_OFF_RAND,
+		O_LEN_POW2,
+		O_MAX_POW2,
+		O_MAX_LIN,
 
 		/* reduce dimension */
-		REDUCE,
+		O_REDUCE,
 
-		/* invalid */
-		MAX_OPCODE,
+		/* end of list */
+		O_MAX = O_REDUCE,
 	} code;
 
+	/* number of indirect results, if any */
 	unsigned int num;
 
+	/* command code specific value */
 	long long val;
+
+	/* output string for O_PRINT */
 	const char *string;
 
-	unsigned int dim;
-	union {
-		ns_t r1;
-		ns_t *r2;
-		ns_t **r3;
-	} result;
-
+	/* aggregation of results from children */
 	enum {
-		MINIMUM,
-		MAXIMUM,
-		AVERAGE,
-		TOTAL,
-		IGNORE,
+		A_MINIMUM,
+		A_MAXIMUM,
+		A_AVERAGE,
+		A_TOTAL,
+		A_IGNORE,
 	} aggregate;
+
+	/* dynamic result contents */
+	res_t		result;
+	unsigned int	size_x;
+	unsigned int	size_y;
+	enum resulttype r_type;
 };
 
 struct syntax {
@@ -69,12 +103,12 @@ struct syntax {
 	struct operation *(*function)(struct operation *op, struct device *dev,
 			 off_t off, off_t max, size_t len);
 	enum {
-		NUM = 1,
-		VAL = 2,
-		STRING = 4,
-		AGGREGATE = 8,
-		ATOM = 16,
-	} args;
+		P_NUM = 1,
+		P_VAL = 2,
+		P_STRING = 4,
+		P_AGGREGATE = 8,
+		P_ATOM = 16,
+	} param;
 };
 
 static struct syntax syntax[];
@@ -85,17 +119,25 @@ static struct operation *call(struct operation *op, struct device *dev,
 	if (!op)
 		return NULL;
 
-	if (op->code >= MAX_OPCODE)
+	if (op->code > O_MAX)
 		return NULL;
 
-	if (!(syntax[op->code].args & NUM) != !op->num)
+	if (!(syntax[op->code].param & P_NUM) != !op->num)
 		return NULL;
-	if (!(syntax[op->code].args & VAL) != !op->val)
+	if (!(syntax[op->code].param & P_VAL) != !op->val)
 		return NULL;
-	if (!(syntax[op->code].args & STRING) != !op->string)
+	if (!(syntax[op->code].param & P_STRING) != !op->string)
 		return NULL;
-	if (!(syntax[op->code].args & AGGREGATE) != !op->aggregate)
+	if (!(syntax[op->code].param & P_AGGREGATE) != !op->aggregate)
 		return NULL;
+
+	if (op->num && !res_ptr(op->result)) {
+		res_t *data = calloc(sizeof (res_t), op->num);
+		if (!data)
+			return NULL;
+
+		op->result = to_res(data, R_NONE);
+	}
 
 	return syntax[op->code].function(op, dev, off, max, len);
 }
@@ -124,12 +166,16 @@ static struct operation *print_ns(struct operation *op, struct device *dev,
 {
 	struct operation *next;
 
-	op++;
-	next = call(op, dev, off, max, len);
-	if (op->dim > 1)
+	next = call(op+1, dev, off, max, len);
+	op->result = op[1].result;
+	op->size_x = op[1].size_x;
+	op->size_y = op[1].size_y;
+	op->r_type = op[1].r_type;
+
+	if (op->size_x || op->size_y || op->r_type != R_NS)
 		return NULL;
 
-	printf("%lld", op->result.r1);
+	printf("%lld", op->result.l);
 	return next;
 }
 
@@ -142,7 +188,7 @@ static struct operation *sequence(struct operation *op, struct device *dev,
 	while (num--)
 		op = call(op, dev, off, max, len);
 
-	if (op->code != END)
+	if (op->code != O_END)
 		return NULL;
 
 	return op++;
@@ -193,123 +239,119 @@ static struct operation *repeat(struct operation *op, struct device *dev,
 	return next;
 }
 
-static ns_t do_reduce1(int num, ns_t *input, int aggregate)
+static res_t do_reduce(int num, res_t *input, int aggregate)
 {
 	int i;
-	ns_t result = 0;
+	res_t result = { .l = 0 };
 
 	for (i = 0; i < num; i++) {
 		switch (aggregate) {
-		case MINIMUM:
-			if (!result || result > input[i])
-				result = input[i];
+		case A_MINIMUM:
+			if (!result.l || result.l > input[i].l)
+				result.l = input[i].l;
 			break;
-		case MAXIMUM:
-			if (!result || result < input[i])
-				result = input[i];
+		case A_MAXIMUM:
+			if (!result.l || result.l < input[i].l)
+				result.l = input[i].l;
 			break;
-		case AVERAGE:
-		case TOTAL:
-			result += input[i];
+		case A_AVERAGE:
+		case A_TOTAL:
+			result.l += input[i].l;
 			break;
 		}
 	}
 
-	if (aggregate == AVERAGE)
-		result /= num;
+	if (aggregate == A_AVERAGE)
+		result.l /= num;
 
 	return result;
-}
-
-static void do_reduce2(int num_out, ns_t *output,
-			int num_in, ns_t **input,
-			int aggregate)
-{
-	int i, j;
-	ns_t result = 0;
-	
-	for (j = 0; j < num_out; j++) {
-		output[j] = 0;
-		for (i = 0; i < num_in; i++) {
-			switch (aggregate) {
-			case MINIMUM:
-				if (!output[j] || result > input[i][j])
-					output[j] = input[i][j];
-				break;
-			case MAXIMUM:
-				if (!output[j] || result < input[i][j])
-					output[j] = input[i][j];
-				break;
-			case AVERAGE:
-			case TOTAL:
-				output[j] += input[i][j];
-				break;
-			}
-
-		if (aggregate == AVERAGE)
-			output[j] /= num_in;
-		}
-	}
 }
 
 static struct operation *reduce(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
-	struct operation *next;
+	struct operation *next, *child;
+	unsigned int i;
+	enum resulttype type;
+	res_t *in;
 
-	next = call(op+1, dev, off, max, len);
+	child = op+1;
+	next = call(child, dev, off, max, len);
 
-	switch (op->dim) {
-	case 1:
-		op->result.r1 = do_reduce1(op[1].num, op[1].result.r2,
-						op->aggregate);
-		break;
-	case 2:
-		do_reduce2(op->num, op->result.r2, op[1].num, op[1].result.r3,
-				 op->aggregate);
-		break;
-	default:
+	/* single value */
+	if (op->r_type != R_ARRAY || op->size_y == 0)
 		return NULL;
+
+	/* data does not fit */
+	if (child->size_y > op->num)
+		return NULL;
+
+	/* one-dimensional array */
+	if (op[1].size_y == 0) {
+		op->result = do_reduce(child->size_x, res_ptr(child->result),
+					op->aggregate);
+		op->size_x = 0;
+		op->size_y = 0;
+		op->r_type = res_type(child->result);
+		return next;
 	}
+
+	/* two-dimensional array */
+	in = res_ptr(child->result);
+	if (res_type(child->result) != R_ARRAY)
+		return NULL;
+
+	type = res_type(in[0]);
+	for (i=0; i<child->size_y; i++) {
+		if (res_type(in[i]) != type)
+			return NULL;
+
+		res_ptr(op->result)[i] = do_reduce(child->size_x, res_ptr(in[i]),
+						   op->aggregate);
+	}
+	op->result = to_res(res_ptr(op->result), type);
+	op->size_x = child->size_y;
+	op->size_y = 0;
+	op->r_type = R_ARRAY;
 
 	return next;
 }
 
 static struct syntax syntax[] = {
-	{ END,		nop,		0 },
-	{ READ,		do_read,	ATOM },
-	{ WRITE_ZERO,	nop,		ATOM },
-	{ WRITE_ONE,	nop,		ATOM },
-	{ WRITE_RAND,	nop,		ATOM },
-	{ ERASE,	nop,		ATOM },
+	{ O_END,	nop,		0 },
+	{ O_READ,	do_read,	P_ATOM },
+	{ O_WRITE_ZERO,	nop,		P_ATOM },
+	{ O_WRITE_ONE,	nop,		P_ATOM },
+	{ O_WRITE_RAND,	nop,		P_ATOM },
+	{ O_ERASE,	nop,		P_ATOM },
 
-	{ PRINT,	print,		STRING },
-	{ PRINT_NS,	print_ns,	0 },
-	{ PRINT_MBPS,	nop,		0 },
+	{ O_PRINT,	print,		P_STRING },
+	{ O_PRINT_NS,	print_ns,	0 },
+	{ O_PRINT_MBPS,	nop,		0 },
 
-	{ SEQUENCE,	sequence,	NUM },
-	{ REPEAT,	repeat,		NUM },
+	{ O_SEQUENCE,	sequence,	P_NUM },
+	{ O_REPEAT,	repeat,		P_NUM },
 
-	{ OFF_FIXED,	off_fixed,	VAL },
-	{ OFF_POW2,	nop,		NUM | VAL },
-	{ OFF_LIN,	off_lin,	NUM | VAL },
-	{ OFF_RAND,	nop,		NUM | VAL },
-	{ LEN_POW2,	len_pow2,	NUM | VAL },
-	{ MAX_POW2,	nop,		NUM | VAL },
-	{ MAX_LIN,	nop,		NUM | VAL },
+	{ O_OFF_FIXED,	off_fixed,	P_VAL },
+	{ O_OFF_POW2,	nop,		P_NUM | P_VAL },
+	{ O_OFF_LIN,	off_lin,	P_NUM | P_VAL },
+	{ O_OFF_RAND,	nop,		P_NUM | P_VAL },
+	{ O_LEN_POW2,	len_pow2,	P_NUM | P_VAL },
+	{ O_MAX_POW2,	nop,		P_NUM | P_VAL },
+	{ O_MAX_LIN,	nop,		P_NUM | P_VAL },
 
-	{ REDUCE,	reduce,		NUM },
+	{ O_REDUCE,	reduce,		P_NUM },
 };
 
 struct operation program[] = {
-	{ SEQUENCE, .num = 3 },
-		{ PRINT, .string = "Hello, World!\n" },
-		{ PRINT_NS },
-			{ REDUCE, 1024, .dim = 2 },
-			{ LEN_POW2, 4, 4096 },
-				{ OFF_LIN, 1024, 4096, .aggregate = MINIMUM },
-					{ READ },
-		{ PRINT, .string = "\n" },
-		{ END },
-	{ END },
+	{ O_SEQUENCE, .num = 3 },
+		{ O_PRINT, .string = "Hello, World!\n" },
+		{ O_PRINT_NS },
+			{ O_REDUCE, 1024 },
+			{ O_LEN_POW2, 4, 4096 },
+				{ O_OFF_LIN, 1024, 4096, .aggregate = A_MINIMUM },
+					{ O_READ },
+		{ O_PRINT, .string = "\n" },
+		{ O_END },
+	{ O_END },
 };
