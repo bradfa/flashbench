@@ -114,8 +114,10 @@ struct syntax {
 static struct syntax syntax[];
 
 static struct operation *call(struct operation *op, struct device *dev,
-		 off_t off, off_t max, size_t len)
+		 off_t off, off_t max, size_t len, res_t *result)
 {
+	struct operation *next;
+
 	if (!op)
 		return NULL;
 
@@ -139,7 +141,12 @@ static struct operation *call(struct operation *op, struct device *dev,
 		op->result = to_res(data, R_NONE);
 	}
 
-	return syntax[op->code].function(op, dev, off, max, len);
+	next = syntax[op->code].function(op, dev, off, max, len);
+
+	if (result)
+		*result = op->result;
+
+	return next;
 }
 
 static struct operation *nop(struct operation *op, struct device *dev,
@@ -166,7 +173,7 @@ static struct operation *print_ns(struct operation *op, struct device *dev,
 {
 	struct operation *next;
 
-	next = call(op+1, dev, off, max, len);
+	next = call(op+1, dev, off, max, len, &op->result);
 	op->result = op[1].result;
 	op->size_x = op[1].size_x;
 	op->size_y = op[1].size_y;
@@ -182,16 +189,17 @@ static struct operation *print_ns(struct operation *op, struct device *dev,
 static struct operation *sequence(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
-	unsigned int num = op->num;
+	unsigned int i;
+	struct operation *next = op+1;
+	res_t *res = res_ptr(op->result);
 
-	op++;
-	while (num--)
-		op = call(op, dev, off, max, len);
+	for (i=0; i<op->num; i++)
+		next = call(next, dev, off, max, len, res+i);
 
-	if (op->code != O_END)
+	if (next->code != O_END)
 		return NULL;
 
-	return op++;
+	return next+1;
 }
 
 static struct operation *len_pow2(struct operation *op, struct device *dev,
@@ -199,12 +207,13 @@ static struct operation *len_pow2(struct operation *op, struct device *dev,
 {
 	unsigned int i;
 	struct operation *next;
+	res_t *res = res_ptr(op->result);
 
 	if (!len)
 		len = 1;
 
 	for (i = 0; i < op->num; i++)
-		next = call(op+1, dev, off, max, len * op->val << i);
+		next = call(op+1, dev, off, max, len * op->val << i, res+i);
 
 	return next;
 }
@@ -212,17 +221,18 @@ static struct operation *len_pow2(struct operation *op, struct device *dev,
 static struct operation *off_fixed(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
-	return call(op+1, dev, off + op->val, max, len);
+	return call(op+1, dev, off + op->val, max, len, &op->result);
 }
 
 static struct operation *off_lin(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
 	struct operation *next;
+	res_t *res = res_ptr(op->result);
 	unsigned int i;
 
 	for (i = 0; i < op->num; i++)
-		next = call(op+1, dev, off + i * op->val, max, len);
+		next = call(op+1, dev, off + i * op->val, max, len, res+i);
 
 	return next;
 }
@@ -231,10 +241,11 @@ static struct operation *repeat(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
 	struct operation *next;
+	res_t *res = res_ptr(op->result);
 	unsigned int i;
 
 	for (i = 0; i < op->num; i++)
-		next = call(op+1, dev, off, max, len);
+		next = call(op+1, dev, off, max, len, res+i);
 
 	return next;
 }
@@ -276,7 +287,7 @@ static struct operation *reduce(struct operation *op, struct device *dev,
 	res_t *in;
 
 	child = op+1;
-	next = call(child, dev, off, max, len);
+	next = call(child, dev, off, max, len, NULL);
 
 	/* single value */
 	if (op->r_type != R_ARRAY || op->size_y == 0)
