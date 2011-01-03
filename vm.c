@@ -36,7 +36,7 @@ static inline res_t to_res(res_t *_p, enum resulttype t)
 	return (res_t) { ._p = (res_t *)(((unsigned long)_p & ~7) | (t & 7)) };
 }
 
-static const union result res_null = { };
+static const res_t res_null = { };
 
 struct operation {
 	enum opcode {
@@ -52,8 +52,9 @@ struct operation {
 
 		/* output */
 		O_PRINT,
-		O_PRINT_NS,
+		O_PRINTF,
 		O_PRINT_MBPS,
+		O_FORMAT,
 
 		/* group */
 		O_SEQUENCE,
@@ -184,6 +185,8 @@ static struct operation *call_aggregate(struct operation *op, struct device *dev
 	enum resulttype type = res_type(this->result);
 
 	next = call(op, dev, off, max, len);
+	if (!next)
+		return NULL;
 
 	res[this->size_x] = op->result;
 
@@ -207,7 +210,7 @@ static struct operation *call_aggregate(struct operation *op, struct device *dev
 					this->size_y, op->size_x);
 
 		if (op->size_y)
-			return_err("cannot aggregate zero-size array\n");
+			return_err("cannot aggregate three-dimensional array\n");
 
 		this->size_y = op->size_x;
 
@@ -228,9 +231,61 @@ static struct operation *do_read(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
 	/* FIXME */
-	printf("read %ld %ld %ld\n", off, max, len);
+	pr_debug("read %ld %ld %ld\n", off, max, len);
 	op->r_type = R_NS;
 	return op+1;
+}
+
+static res_t format_value(res_t val, enum resulttype type,
+			unsigned int size_x, unsigned int size_y)
+{
+	long long ns = val.l;
+	unsigned int x;
+	res_t *res;
+	res_t out;
+
+	switch (type) {
+	case R_ARRAY:
+		res = res_ptr(val);
+		for (x = 0; x < size_x; x++) {
+			res[x] = format_value(res[x], res_type(val), size_y, 0);
+			if (res[x].s == res_null.s)
+				return res_null;
+		}
+		if (res_type(val) == R_ARRAY)
+			out = val;
+		else
+			out = to_res(res_ptr(val), R_STRING);
+		break;
+	case R_NS:
+		if (ns < 1000)
+			snprintf(out.s, 8, "%lldns", ns);
+		else if (ns < 1000 * 1000)
+			snprintf(out.s, 8, "%.3gµs", ns / 1000.0);
+		else if (ns < 1000 * 1000 * 1000)
+			snprintf(out.s, 8, "%.3gms", ns / 1000000.0);
+		else
+			snprintf(out.s, 8, "%.4gs", ns / 1000000000.0);
+		break;
+	default:
+		out = res_null;
+	}
+
+	return out;
+}
+
+static struct operation *format(struct operation *op, struct device *dev,
+		 off_t off, off_t max, size_t len)
+{
+	struct operation *next;
+
+	next = call_propagate(op+1, dev, off, max, len, op);
+	op->result = format_value(op->result, op->r_type, op->size_x, op->size_y);
+
+	if (op->result.s == res_null.s)
+		return NULL;
+
+	return next;
 }
 
 static struct operation *print(struct operation *op, struct device *dev,
@@ -240,7 +295,38 @@ static struct operation *print(struct operation *op, struct device *dev,
 	return op+1;
 }
 
-static struct operation *print_ns(struct operation *op, struct device *dev,
+static void *print_value(res_t val, enum resulttype type,
+			unsigned int size_x, unsigned int size_y)
+{
+	unsigned int x;
+	res_t *res;
+
+	switch (type) {
+	case R_ARRAY:
+		res = res_ptr(val);
+		for (x=0; x < size_x; x++) {
+			if (!print_value(res[x], res_type(val), size_y, 0))
+				return_err("cannot print array of type %d\n",
+					res_type(val));
+			printf(size_y ? "\n" : " ");
+		}
+
+
+		break;
+	case R_BYTE:
+	case R_NS:
+		printf("%lld", val.l);
+		break;
+	case R_STRING:
+		printf("%s", val.s);
+		break;
+	default:
+		return NULL;
+	}
+	return (void *)1;
+}
+
+static struct operation *print_val(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
 	struct operation *next;
@@ -249,10 +335,9 @@ static struct operation *print_ns(struct operation *op, struct device *dev,
 	if (!next)
 		return NULL;
 
-	if (op->size_x || op->size_y || op->r_type != R_NS)
-		return_err("argument to print is of type %d, not ns\n", op->r_type);
+	if (!print_value(op->result, op->r_type, op->size_x, op->size_y))
+		return_err("cannot print value of type %d\n", op->r_type);
 
-	printf("%lld", op->result.l);
 	return next;
 }
 
@@ -406,8 +491,9 @@ static struct syntax syntax[] = {
 	{ O_ERASE,	"ERASE",	nop,		P_ATOM },
 
 	{ O_PRINT,	"PRINT",	print,		P_STRING },
-	{ O_PRINT_NS,	"PRINT_NS",	print_ns,	0 },
+	{ O_PRINTF,	"PRINTF",	print_val,	0 },
 	{ O_PRINT_MBPS,	"PRINT_MBPS",	nop,		0 },
+	{ O_FORMAT,	"FORMAT",	format,		0 },
 
 	{ O_SEQUENCE,	"SEQUENCE",	sequence,	P_NUM },
 	{ O_REPEAT,	"REPEAT",	repeat,		P_NUM },
@@ -426,10 +512,10 @@ static struct syntax syntax[] = {
 struct operation program[] = {
 	{ O_SEQUENCE, .num = 3 },
 		{ O_PRINT, .string = "Hello, World!\n" },
-		{ O_PRINT_NS },
-			{ O_REDUCE, 8 },
+		{ O_PRINTF },
 			{ O_REDUCE, 8 },
 			    { O_LEN_POW2, 4, 4096 },
+			    { O_FORMAT },
 				{ O_OFF_LIN, 8, 4096 },//, .aggregate = A_MINIMUM },
 				    { O_READ },
 		{ O_PRINT, .string = "\n" },
