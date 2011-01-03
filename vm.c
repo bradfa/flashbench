@@ -36,6 +36,8 @@ static inline res_t to_res(res_t *_p, enum resulttype t)
 	return (res_t) { ._p = (res_t *)(((unsigned long)_p & ~7) | (t & 7)) };
 }
 
+static const union result res_null = { };
+
 struct operation {
 	enum opcode {
 		/* end of program marker */
@@ -100,6 +102,7 @@ struct operation {
 
 struct syntax {
 	enum opcode opcode;
+	const char *name;
 	struct operation *(*function)(struct operation *op, struct device *dev,
 			 off_t off, off_t max, size_t len);
 	enum {
@@ -112,37 +115,44 @@ struct syntax {
 };
 
 static struct syntax syntax[];
+static int verbose = 1;
+#define pr_debug(...) do { if (verbose) printf(__VA_ARGS__); } while(0)
+#define return_err(...) do { printf(__VA_ARGS__); return NULL; } while(0)
 
 static struct operation *call(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
 	struct operation *next;
 
+	pr_debug("call %s %ld %ld %ld\n", syntax[op->code].name, off, max, len);
+
 	if (!op)
-		return NULL;
+		return_err("internal error: NULL operation\n");
 
 	if (op->code > O_MAX)
-		return NULL;
+		return_err("illegal command code %d\n", op->code);
 
 	if (!(syntax[op->code].param & P_NUM) != !op->num)
-		return NULL;
+		return_err("need .num= argument\n");
 	if (!(syntax[op->code].param & P_VAL) != !op->val)
-		return NULL;
+		return_err("need .param= argument\n");
 	if (!(syntax[op->code].param & P_STRING) != !op->string)
-		return NULL;
+		return_err("need .string= argument\n");
 	if (!(syntax[op->code].param & P_AGGREGATE) != !op->aggregate)
-		return NULL;
+		return_err("need .aggregate= argument\n");
 
 	if (op->num && !res_ptr(op->result)) {
 		res_t *data = calloc(sizeof (res_t), op->num);
 		if (!data)
-			return NULL;
+			return_err("out of memory");
 
-		op->result = to_res(data, R_NONE);
+		op->result = res_null;
 		op->r_type = R_ARRAY;
 	}
 
 	next = syntax[op->code].function(op, dev, off, max, len);
+	if (!next)
+		return_err("from %s\n", syntax[op->code].name);
 
 	return next;
 }
@@ -159,7 +169,7 @@ static struct operation *call_propagate(struct operation *op, struct device *dev
 	this->size_y = op->size_y;
 	this->r_type = op->r_type;
 
-	op->result = to_res(NULL, R_NONE);
+	op->result = res_null;
 	op->size_x = op->size_y = 0;
 	op->r_type = R_NONE;
 
@@ -176,6 +186,10 @@ static struct operation *call_aggregate(struct operation *op, struct device *dev
 	next = call(op, dev, off, max, len);
 
 	res[this->size_x] = op->result;
+
+	if (op->r_type == R_NONE)
+		return next;
+
 	this->size_x++;
 
 	if (type == R_NONE) {
@@ -184,19 +198,21 @@ static struct operation *call_aggregate(struct operation *op, struct device *dev
 	}
 
 	if (type != op->r_type)
-		return NULL;
+		return_err("cannot aggregate return type %d with %d\n",
+				type, op->r_type);
 
 	if (op->r_type == R_ARRAY) {
 		if (this->size_y && this->size_y != op->size_x)
-			return NULL;
+			return_err("cannot aggregate different size arrays (%d, %d)\n",
+					this->size_y, op->size_x);
 
 		if (op->size_y)
-			return NULL;
+			return_err("cannot aggregate zero-size array\n");
 
 		this->size_y = op->size_x;
 
 		op->size_x = op->size_y = 0;
-		op->result = to_res(NULL, R_NONE);
+		op->result = res_null;
 	}
 
 	return next;
@@ -205,12 +221,15 @@ static struct operation *call_aggregate(struct operation *op, struct device *dev
 static struct operation *nop(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
-	return NULL;
+	return_err("command not implemented\n");
 }
 
 static struct operation *do_read(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
+	/* FIXME */
+	printf("read %ld %ld %ld\n", off, max, len);
+	op->r_type = R_NS;
 	return op+1;
 }
 
@@ -229,7 +248,7 @@ static struct operation *print_ns(struct operation *op, struct device *dev,
 	next = call_propagate(op+1, dev, off, max, len, op);
 
 	if (op->size_x || op->size_y || op->r_type != R_NS)
-		return NULL;
+		return_err("argument to print is not of type ns\n");
 
 	printf("%lld", op->result.l);
 	return next;
@@ -245,7 +264,7 @@ static struct operation *sequence(struct operation *op, struct device *dev,
 		next = call_aggregate(next, dev, off, max, len, op);
 
 	if (next->code != O_END)
-		return NULL;
+		return_err("sequence needs to end with END command\n");
 
 	return next+1;
 }
@@ -254,13 +273,13 @@ static struct operation *len_pow2(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
 	unsigned int i;
-	struct operation *next;
+	struct operation *next = op+1;
 
 	if (!len)
 		len = 1;
 
 	for (i = 0; i < op->num; i++)
-		next = call_aggregate(op+1, dev, off, max, len * op->val << i, op);
+		next = call_aggregate(next, dev, off, max, len * op->val << i, op);
 
 	return next;
 }
@@ -274,11 +293,11 @@ static struct operation *off_fixed(struct operation *op, struct device *dev,
 static struct operation *off_lin(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
-	struct operation *next;
+	struct operation *next = op+1;
 	unsigned int i;
 
 	for (i = 0; i < op->num; i++)
-		next = call_aggregate(op+1, dev, off + i * op->val, max, len, op);
+		next = call_aggregate(next, dev, off + i * op->val, max, len, op);
 
 	return next;
 }
@@ -286,7 +305,7 @@ static struct operation *off_lin(struct operation *op, struct device *dev,
 static struct operation *repeat(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
-	struct operation *next;
+	struct operation *next = op+1;
 	unsigned int i;
 
 	for (i = 0; i < op->num; i++)
@@ -336,31 +355,32 @@ static struct operation *reduce(struct operation *op, struct device *dev,
 
 	/* single value */
 	if (op->r_type != R_ARRAY || op->size_y == 0)
-		return NULL;
+		return_err("cannot reduce scalar further\n");
 
 	/* data does not fit */
 	if (child->size_y > op->num)
-		return NULL;
+		return_err("target array too short\n"); /* FIXME: is this necessary? */
 
 	/* one-dimensional array */
 	if (op[1].size_y == 0) {
 		op->result = do_reduce(child->size_x, res_ptr(child->result),
 					op->aggregate);
-		op->size_x = 0;
-		op->size_y = 0;
+		op->size_x = op->size_y = 0;
 		op->r_type = res_type(child->result);
+
 		return next;
 	}
 
 	/* two-dimensional array */
 	in = res_ptr(child->result);
 	if (res_type(child->result) != R_ARRAY)
-		return NULL;
+		return_err("inconsistent array contents\n");
 
 	type = res_type(in[0]);
 	for (i=0; i<child->size_y; i++) {
 		if (res_type(in[i]) != type)
-			return NULL;
+			return_err("cannot combine type %d and %d\n",
+				 res_type(in[i]), type);
 
 		res_ptr(op->result)[i] = do_reduce(child->size_x, res_ptr(in[i]),
 						   op->aggregate);
@@ -374,29 +394,29 @@ static struct operation *reduce(struct operation *op, struct device *dev,
 }
 
 static struct syntax syntax[] = {
-	{ O_END,	nop,		0 },
-	{ O_READ,	do_read,	P_ATOM },
-	{ O_WRITE_ZERO,	nop,		P_ATOM },
-	{ O_WRITE_ONE,	nop,		P_ATOM },
-	{ O_WRITE_RAND,	nop,		P_ATOM },
-	{ O_ERASE,	nop,		P_ATOM },
+	{ O_END,	"END",		nop,		0 },
+	{ O_READ,	"READ",		do_read,	P_ATOM },
+	{ O_WRITE_ZERO,	"WRITE_ZERO",	nop,		P_ATOM },
+	{ O_WRITE_ONE,	"WRITE_ONE",	nop,		P_ATOM },
+	{ O_WRITE_RAND,	"WRITE_RAND",	nop,		P_ATOM },
+	{ O_ERASE,	"ERASE",	nop,		P_ATOM },
 
-	{ O_PRINT,	print,		P_STRING },
-	{ O_PRINT_NS,	print_ns,	0 },
-	{ O_PRINT_MBPS,	nop,		0 },
+	{ O_PRINT,	"PRINT",	print,		P_STRING },
+	{ O_PRINT_NS,	"PRINT_NS",	print_ns,	0 },
+	{ O_PRINT_MBPS,	"PRINT_MBPS",	nop,		0 },
 
-	{ O_SEQUENCE,	sequence,	P_NUM },
-	{ O_REPEAT,	repeat,		P_NUM },
+	{ O_SEQUENCE,	"SEQUENCE",	sequence,	P_NUM },
+	{ O_REPEAT,	"REPEAT",	repeat,		P_NUM },
 
-	{ O_OFF_FIXED,	off_fixed,	P_VAL },
-	{ O_OFF_POW2,	nop,		P_NUM | P_VAL },
-	{ O_OFF_LIN,	off_lin,	P_NUM | P_VAL },
-	{ O_OFF_RAND,	nop,		P_NUM | P_VAL },
-	{ O_LEN_POW2,	len_pow2,	P_NUM | P_VAL },
-	{ O_MAX_POW2,	nop,		P_NUM | P_VAL },
-	{ O_MAX_LIN,	nop,		P_NUM | P_VAL },
+	{ O_OFF_FIXED,	"OFF_FIXED",	off_fixed,	P_VAL },
+	{ O_OFF_POW2,	"OFF_POW2",	nop,		P_NUM | P_VAL },
+	{ O_OFF_LIN,	"OFF_LIN",	off_lin,	P_NUM | P_VAL },
+	{ O_OFF_RAND,	"OFF_RAND",	nop,		P_NUM | P_VAL },
+	{ O_LEN_POW2,	"LEN_POW2",	len_pow2,	P_NUM | P_VAL },
+	{ O_MAX_POW2,	"MAX_POW2",	nop,		P_NUM | P_VAL },
+	{ O_MAX_LIN,	"MAX_LIN",	nop,		P_NUM | P_VAL },
 
-	{ O_REDUCE,	reduce,		P_NUM },
+	{ O_REDUCE,	"REDUCE",	reduce,		P_NUM },
 };
 
 struct operation program[] = {
@@ -411,3 +431,10 @@ struct operation program[] = {
 		{ O_END },
 	{ O_END },
 };
+
+int main(void)
+{
+	call(program, NULL, 0, 4096 * 1024, 512);
+
+	return 0;
+}
