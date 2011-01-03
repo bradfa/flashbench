@@ -114,7 +114,7 @@ struct syntax {
 static struct syntax syntax[];
 
 static struct operation *call(struct operation *op, struct device *dev,
-		 off_t off, off_t max, size_t len, res_t *result)
+		 off_t off, off_t max, size_t len)
 {
 	struct operation *next;
 
@@ -139,12 +139,65 @@ static struct operation *call(struct operation *op, struct device *dev,
 			return NULL;
 
 		op->result = to_res(data, R_NONE);
+		op->r_type = R_ARRAY;
 	}
 
 	next = syntax[op->code].function(op, dev, off, max, len);
 
-	if (result)
-		*result = op->result;
+	return next;
+}
+
+static struct operation *call_propagate(struct operation *op, struct device *dev,
+		 off_t off, off_t max, size_t len, struct operation *this)
+{
+	struct operation *next;
+
+	next = call(op, dev, off, max, len);
+
+	this->result = op->result;
+	this->size_x = op->size_x;
+	this->size_y = op->size_y;
+	this->r_type = op->r_type;
+
+	op->result = to_res(NULL, R_NONE);
+	op->size_x = op->size_y = 0;
+	op->r_type = R_NONE;
+
+	return next;
+}
+
+static struct operation *call_aggregate(struct operation *op, struct device *dev,
+		 off_t off, off_t max, size_t len, struct operation *this)
+{
+	struct operation *next;
+	res_t *res = res_ptr(this->result);
+	enum resulttype type = res_type(this->result);
+
+	next = call(op, dev, off, max, len);
+
+	res[this->size_x] = op->result;
+	this->size_x++;
+
+	if (type == R_NONE) {
+		type = op->r_type;
+		this->result = to_res(res, type);
+	}
+
+	if (type != op->r_type)
+		return NULL;
+
+	if (op->r_type == R_ARRAY) {
+		if (this->size_y && this->size_y != op->size_x)
+			return NULL;
+
+		if (op->size_y)
+			return NULL;
+
+		this->size_y = op->size_x;
+
+		op->size_x = op->size_y = 0;
+		op->result = to_res(NULL, R_NONE);
+	}
 
 	return next;
 }
@@ -173,11 +226,7 @@ static struct operation *print_ns(struct operation *op, struct device *dev,
 {
 	struct operation *next;
 
-	next = call(op+1, dev, off, max, len, &op->result);
-	op->result = op[1].result;
-	op->size_x = op[1].size_x;
-	op->size_y = op[1].size_y;
-	op->r_type = op[1].r_type;
+	next = call_propagate(op+1, dev, off, max, len, op);
 
 	if (op->size_x || op->size_y || op->r_type != R_NS)
 		return NULL;
@@ -191,10 +240,9 @@ static struct operation *sequence(struct operation *op, struct device *dev,
 {
 	unsigned int i;
 	struct operation *next = op+1;
-	res_t *res = res_ptr(op->result);
 
 	for (i=0; i<op->num; i++)
-		next = call(next, dev, off, max, len, res+i);
+		next = call_aggregate(next, dev, off, max, len, op);
 
 	if (next->code != O_END)
 		return NULL;
@@ -207,13 +255,12 @@ static struct operation *len_pow2(struct operation *op, struct device *dev,
 {
 	unsigned int i;
 	struct operation *next;
-	res_t *res = res_ptr(op->result);
 
 	if (!len)
 		len = 1;
 
 	for (i = 0; i < op->num; i++)
-		next = call(op+1, dev, off, max, len * op->val << i, res+i);
+		next = call_aggregate(op+1, dev, off, max, len * op->val << i, op);
 
 	return next;
 }
@@ -221,18 +268,17 @@ static struct operation *len_pow2(struct operation *op, struct device *dev,
 static struct operation *off_fixed(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
-	return call(op+1, dev, off + op->val, max, len, &op->result);
+	return call_propagate(op+1, dev, off + op->val, max, len, op);
 }
 
 static struct operation *off_lin(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
 	struct operation *next;
-	res_t *res = res_ptr(op->result);
 	unsigned int i;
 
 	for (i = 0; i < op->num; i++)
-		next = call(op+1, dev, off + i * op->val, max, len, res+i);
+		next = call_aggregate(op+1, dev, off + i * op->val, max, len, op);
 
 	return next;
 }
@@ -241,11 +287,10 @@ static struct operation *repeat(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
 	struct operation *next;
-	res_t *res = res_ptr(op->result);
 	unsigned int i;
 
 	for (i = 0; i < op->num; i++)
-		next = call(op+1, dev, off, max, len, res+i);
+		next = call_aggregate(op+1, dev, off, max, len, op);
 
 	return next;
 }
@@ -287,7 +332,7 @@ static struct operation *reduce(struct operation *op, struct device *dev,
 	res_t *in;
 
 	child = op+1;
-	next = call(child, dev, off, max, len, NULL);
+	next = call(child, dev, off, max, len);
 
 	/* single value */
 	if (op->r_type != R_ARRAY || op->size_y == 0)
