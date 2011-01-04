@@ -73,6 +73,7 @@ struct operation {
 
 	/* aggregation of results from children */
 	enum {
+		A_NONE,
 		A_MINIMUM,
 		A_MAXIMUM,
 		A_AVERAGE,

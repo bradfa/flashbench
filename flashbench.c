@@ -15,6 +15,7 @@
 #include <stdbool.h>
 
 #include "dev.h"
+#include "vm.h"
 
 typedef long long ns_t;
 
@@ -411,6 +412,51 @@ static int try_read_alignments(struct device *dev, int tries, int blocksize)
 	return 0;
 }
 
+static int try_program(struct device *dev)
+{
+#if 0
+	struct operation program[] = {
+		{O_REPEAT, 4},
+		{O_SEQUENCE, 3},
+			{O_PRINT, .string = "Hello, World!\n"},
+			{O_DROP},
+				{O_PRINTF},
+				{O_FORMAT},
+				{O_REDUCE, 8, .aggregate = A_AVERAGE},
+				{O_LEN_POW2, 8, 512},
+				{O_OFF_LIN, 8, 4096 },
+				{O_SEQUENCE, 3},
+					{O_PRINTF},
+						{O_READ},
+					{O_NEWLINE},
+					{O_DROP},
+						{O_READ},
+					{O_END},
+			{O_NEWLINE},
+			{O_END},
+		{O_END},
+	};
+#endif
+
+	struct operation program[] = {
+		{O_SEQUENCE, 3},
+			{O_PRINT, .string="read by size\n"},
+			{O_PRINTF},
+				{O_FORMAT},
+				{O_LEN_POW2, 12, 512},
+				{O_REDUCE, .aggregate = A_MINIMUM},
+				{O_OFF_LIN, 128, 4096 * 1024},
+				{O_READ},
+			{O_NEWLINE},
+			{O_END},
+		{O_END},
+	};
+	
+	call(program, dev, 0, 4096 * 1024, 1);
+
+	return 0;
+}
+
 static void print_help(const char *name)
 {
 	printf("%s [OPTION]... [DEVICE]\n", name);
@@ -426,7 +472,7 @@ static void print_help(const char *name)
 struct arguments {
 	const char *dev;
 	const char *out;
-	bool scatter, rcache, align, interval;
+	bool scatter, rcache, align, interval, program;
 	int verbosity;
 	int count;
 	int blocksize;
@@ -461,7 +507,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 	while (1) {
 		int c;
 
-		c = getopt_long(argc, argv, "o:sraivc:b:", long_options, &optind);
+		c = getopt_long(argc, argv, "o:sraivc:b:p", long_options, &optind);
 
 		if (c == -1)
 			break;
@@ -499,6 +545,10 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 			args->interval_order = atoi(optarg);
 			break;
 
+		case 'p':
+			args->program = 1;
+			break;
+
 		case 'v':
 			args->verbosity++;
 			break;
@@ -526,7 +576,8 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 	args->dev = argv[optind];
 
 	if (!(args->scatter || args->rcache ||
-	      args->align || args->interval)) {
+	      args->align || args->interval ||
+	      args->program)) {
 		fprintf(stderr, "%s: need at least one action\n", argv[0]);
 		return -EINVAL;
 	}
@@ -604,6 +655,10 @@ int main(int argc, char **argv)
 			perror("try_intervals");
 			return ret;
 		}
+	}
+
+	if (args.program) {
+		try_program(&dev);
 	}
 
 	return 0;

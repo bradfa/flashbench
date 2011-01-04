@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <stdlib.h>
 
+#include "dev.h"
 #include "vm.h"
 
 static inline res_t *res_ptr(res_t r)
@@ -65,11 +66,13 @@ struct operation *call(struct operation *op, struct device *dev,
 	if (!(syntax[op->code].param & P_AGGREGATE) != !op->aggregate)
 		return_err("need .aggregate= argument\n");
 
-	if (op->num && res_ptr(op->result))
-		return_err("%s already has result\n", syntax[op->code].name);
+	if (op->num) {
+		res_t *data;
 
-	if (op->num && !res_ptr(op->result)) {
-		res_t *data = calloc(sizeof (res_t), op->num);
+		if (res_ptr(op->result))
+			return_err("%s already has result\n", syntax[op->code].name);
+
+		data = calloc(sizeof (res_t), op->num);
 		if (!data)
 			return_err("out of memory");
 
@@ -116,19 +119,21 @@ static struct operation *call_aggregate(struct operation *op, struct device *dev
 
 	res[this->size_x] = op->result;
 
+	/* no result */
 	if (op->r_type == R_NONE)
 		return next;
 
 	this->size_x++;
-
+	/* first data in this aggregation: set type */
 	if (type == R_NONE) {
 		type = op->r_type;
 		this->result = to_res(res, type);
 	}
 
-	if (type != op->r_type)
+	if (type != op->r_type) {
 		return_err("cannot aggregate return type %d with %d\n",
 				type, op->r_type);
+	}
 
 	if (op->r_type == R_ARRAY) {
 		if (this->size_y && this->size_y != op->size_x)
@@ -141,8 +146,10 @@ static struct operation *call_aggregate(struct operation *op, struct device *dev
 		this->size_y = op->size_x;
 
 		op->size_x = op->size_y = 0;
-		op->result = res_null;
 	}
+
+	op->r_type = R_NONE;
+	op->result = res_null;
 
 	return next;
 }
@@ -156,9 +163,7 @@ static struct operation *nop(struct operation *op, struct device *dev,
 static struct operation *do_read(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
-	/* FIXME */
-	pr_debug("read %ld %ld %ld\n", off, max, len);
-	op->result.l = 0;
+	op->result.l = time_read(dev, off, len);
 	op->r_type = R_NS;
 	return op+1;
 }
@@ -478,35 +483,7 @@ static struct syntax syntax[] = {
 	{ O_MAX_POW2,	"MAX_POW2",	nop,		P_NUM | P_VAL },
 	{ O_MAX_LIN,	"MAX_LIN",	nop,		P_NUM | P_VAL },
 
-	{ O_REDUCE,	"REDUCE",	reduce,		P_NUM | P_AGGREGATE },
+	{ O_REDUCE,	"REDUCE",	reduce,		P_AGGREGATE },
 	{ O_DROP,	"DROP",		drop,		},
 };
 
-struct operation program[] = {
-	{O_REPEAT, 4},
-	{O_SEQUENCE, 3},
-		{O_PRINT, .string = "Hello, World!\n"},
-		{O_DROP},
-			{O_PRINTF},
-			{O_FORMAT},
-			{O_REDUCE, 8, .aggregate = A_AVERAGE},
-			{O_LEN_POW2, 4, 4096},
-			{O_OFF_LIN, 8, 4096 },
-			{O_SEQUENCE, 3},
-				{O_PRINTF},
-					{O_READ},
-				{O_NEWLINE},
-				{O_DROP},
-					{O_READ},
-				{O_END},
-		{O_NEWLINE},
-		{O_END},
-	{O_END},
-};
-
-int main(void)
-{
-	call(program, NULL, 0, 4096 * 1024, 512);
-
-	return 0;
-}

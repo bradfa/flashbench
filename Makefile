@@ -2,11 +2,13 @@ CC	:= gcc
 CFLAGS	:= -O2 -Wall -Wextra -Wno-missing-field-initializers -Wno-unused-parameter -g2
 LDFLAGS := -lrt
 
-all: flashbench vm
+all: flashbench
 
-flashbench: flashbench.o dev.o
+dev.o: dev.c dev.h
+vm.o: vm.c vm.h dev.h
+flashbench.o: flashbench.c vm.h dev.h
 
-vm: vm.o dev.o
+flashbench: flashbench.o dev.o vm.o
 
 clean:
-	rm flashbench vm
+	rm flashbench flashbench.o dev.o vm.o
