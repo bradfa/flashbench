@@ -117,6 +117,9 @@ static struct operation *call_aggregate(struct operation *op, struct device *dev
 	if (!next)
 		return NULL;
 
+	if (this->size_x >= this->num)
+		return_err("array too small for %d entries\n", this->size_x);
+
 	res[this->size_x] = op->result;
 
 	/* no result */
@@ -231,6 +234,18 @@ static res_t format_value(res_t val, enum resulttype type,
 			snprintf(out.s, 8, "%.4gGiB", l / (1024.0 * 1024.0 * 1024.0));
 		break;
 
+	case R_BPS:
+		if (l < 1024)
+			snprintf(out.s, 8, "%lldB/s", l);
+		else if (l < 1024 * 1024)
+			snprintf(out.s, 8, "%.3gK/s", l / 1024.0);
+		else if (l < 1024 * 1024 * 1024)
+			snprintf(out.s, 8, "%.3gM/s", l / (1024.0 * 1024.0));
+		else
+			snprintf(out.s, 8, "%.4gG/s", l / (1024.0 * 1024.0 * 1024.0));
+		break;
+		
+
 	case R_NS:
 		if (l < 1000)
 			snprintf(out.s, 8, "%lldns", l);
@@ -292,6 +307,7 @@ static void *print_value(res_t val, enum resulttype type,
 		break;
 	case R_BYTE:
 	case R_NS:
+	case R_BPS:
 		printf("%lld ", val.l);
 		break;
 	case R_STRING:
@@ -323,6 +339,47 @@ static struct operation *newline(struct operation *op, struct device *dev,
 {
 	printf("\n");
 	return op+1;
+}
+
+static res_t bytespersec_one(res_t res, size_t bytes, enum resulttype type,
+			unsigned int size_x, unsigned int size_y)
+{
+	if (type == R_NS)
+		res.l = 1000000000ll * bytes / res.l;
+	else if (type == R_ARRAY) {
+		res_t *array = res_ptr(res);
+		type = res_type(res);
+		unsigned int x;
+
+		for (x = 0; x < size_x; x++)
+			array[x] = bytespersec_one(array[x], bytes,
+					type, size_y, 0);
+
+		if (type == R_NS)
+			res = to_res(array, R_BPS);
+	} else {
+		res = res_null;
+	}
+
+	return res;
+}
+
+static struct operation *bytespersec(struct operation *op, struct device *dev,
+		 off_t off, off_t max, size_t len)
+{
+	struct operation *next;
+	next = call_propagate(op+1, dev, off, max, len, op);
+
+	op->result = bytespersec_one(op->result, len, op->r_type,
+				 op->size_x, op->size_y);
+
+	if (op->result.l == res_null.l)
+		return_err("invalid data, type %d\n", op->r_type);
+
+	if (op->r_type == R_NS)
+		op->r_type = R_BPS;
+
+	return next;
 }
 
 static struct operation *sequence(struct operation *op, struct device *dev,
@@ -394,6 +451,10 @@ static struct operation *off_lin(struct operation *op, struct device *dev,
 	unsigned int num, val;
 
 	if (op->val == -1) {
+		if (len == 0 || max < (off_t)len)
+			return_err("cannot fill %ld bytes with %ld byte chunks\n",
+					max, len);
+
 		num = max/len;
 		val = max/num;
 	} else {
@@ -473,6 +534,10 @@ static struct operation *off_rand(struct operation *op, struct device *dev,
 	unsigned int pos = 0, bits = 0;
 
 	if (op->val == -1) {
+		if (len == 0 || max < (off_t)len)
+			return_err("cannot fill %ld bytes with %ld byte chunks\n",
+					max, len);
+
 		num = max/len;
 		val = max/num;
 	} else {
@@ -490,7 +555,7 @@ static struct operation *off_rand(struct operation *op, struct device *dev,
 		do {
 			pos = lfsr(pos, bits);
 		} while (pos > num);
-		next = call_aggregate(op+1, dev, off + i * val, max, len, op);
+		next = call_aggregate(op+1, dev, off + pos * val, max, len, op);
 	}
 
 	return next;
@@ -559,7 +624,8 @@ static struct operation *reduce(struct operation *op, struct device *dev,
 
 	/* one-dimensional array */
 	if (child->size_y == 0) {
-		if (res_type(child->result) != R_NS)
+		if (res_type(child->result) != R_NS &&
+		    res_type(child->result) != R_BPS)
 			return_err("cannot reduce type %d\n", res_type(child->result));
 
 		op->result = do_reduce_int(child->size_x, res_ptr(child->result),
@@ -627,6 +693,7 @@ static struct syntax syntax[] = {
 	{ O_PRINTF,	"PRINTF",	print_val,	},
 	{ O_FORMAT,	"FORMAT",	format,		},
 	{ O_NEWLINE,	"NEWLINE",	newline,	},
+	{ O_BPS,	"BPS",		bytespersec,	},
 
 	{ O_SEQUENCE,	"SEQUENCE",	sequence,	P_NUM },
 	{ O_REPEAT,	"REPEAT",	repeat,		P_NUM },

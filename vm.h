@@ -10,6 +10,7 @@ enum resulttype {
 	R_ARRAY,
 	R_NS,
 	R_BYTE,
+	R_BPS,
 	R_STRING,
 };
 
@@ -40,6 +41,7 @@ struct operation {
 		O_PRINTF,
 		O_FORMAT,
 		O_NEWLINE,
+		O_BPS,
 
 		/* group */
 		O_SEQUENCE,
