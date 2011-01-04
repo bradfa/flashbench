@@ -438,6 +438,7 @@ static int try_program(struct device *dev)
 	};
 #endif
 
+#if 0
 	struct operation program[] = {
 		{O_SEQUENCE, 3},
 			{O_PRINT, .string="read by size\n"},
@@ -451,7 +452,7 @@ static int try_program(struct device *dev)
 				{O_PRINTF},
 					{O_FORMAT},
 					{O_REDUCE, .aggregate = A_MINIMUM},
-					{O_OFF_LIN, 128, 4096 * 1024},
+					{O_OFF_LIN, 8, 4096 * 1024},
 					{O_READ},
 				{O_NEWLINE},
 				{O_END},
@@ -459,7 +460,46 @@ static int try_program(struct device *dev)
 			{O_END},
 		{O_END},
 	};
-	
+#endif	
+
+	struct operation program[] = {
+		{O_LEN_POW2, 12, 2048},
+		{O_SEQUENCE, 4},
+			{O_DROP},
+				{O_PRINTF},
+				{O_FORMAT},
+				{O_LENGTH},
+			{O_PRINT, .string = " linear write0/write1/writerand/read\n"},
+			{O_PRINTF},
+				{O_FORMAT},
+				{O_SEQUENCE, 4},
+					{O_REDUCE, .aggregate = A_TOTAL},
+						{O_OFF_LIN, 2048, -1},
+						{O_WRITE_ZERO},
+					{O_REDUCE, .aggregate = A_TOTAL},
+						{O_OFF_LIN, 2048, -1},
+						{O_WRITE_ONE},
+					{O_REDUCE, .aggregate = A_TOTAL},
+						{O_OFF_LIN, 2048, -1},
+						{O_WRITE_RAND},
+					{O_REDUCE, .aggregate = A_TOTAL},
+						{O_OFF_LIN, 2048, -1},
+						{O_READ},
+					{O_END},
+			{O_NEWLINE},
+#if 0
+				{O_DROP},
+				{O_PRINTF},
+				{O_SEQUENCE, 3},
+					{O_FORMAT}, {O_OFFSET},
+					{O_FORMAT}, {O_LENGTH},
+					{O_NEWLINE},
+					{O_END},
+#endif
+			{O_END},
+		{O_END},
+	};
+
 	call(program, dev, 0, 4096 * 1024, 1);
 
 	return 0;

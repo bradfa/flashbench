@@ -377,9 +377,18 @@ static struct operation *off_lin(struct operation *op, struct device *dev,
 {
 	struct operation *next = op+1;
 	unsigned int i;
+	unsigned int num, val;
 
-	for (i = 0; i < op->num && next; i++)
-		next = call_aggregate(op+1, dev, off + i * op->val, max, len, op);
+	if (op->val == -1) {
+		num = max/len;
+		val = max/num;
+	} else {
+		val = op->val;
+		num = op->num;
+	}
+
+	for (i = 0; i < num && next; i++)
+		next = call_aggregate(op+1, dev, off + i * val, max, len, op);
 
 	return next;
 }
