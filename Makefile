@@ -4,9 +4,9 @@ LDFLAGS := -lrt
 
 all: flashbench vm
 
-flashbench: flashbench.c
+flashbench: flashbench.o dev.o
 
-vm: vm.c
+vm: vm.o dev.o
 
 clean:
 	rm flashbench vm

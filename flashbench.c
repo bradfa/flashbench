@@ -8,34 +8,17 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <inttypes.h>
-#include <time.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <limits.h>
-#include <sched.h>
 #include <string.h>
 #include <getopt.h>
 #include <stdbool.h>
 
+#include "dev.h"
+
 typedef long long ns_t;
-struct device {
-	int fd;
-	ssize_t size;
-};
 
 #define returnif(x) do { typeof(x) __x = (x); if (__x < 0) return (__x); } while (0)
-
-static inline ns_t time_to_ns(struct timespec *ts)
-{
-	return ts->tv_sec * 1000 * 1000 * 1000 + ts->tv_nsec;
-}
-
-static ns_t get_ns(void)
-{
-	struct timespec ts;
-	clock_gettime(CLOCK_REALTIME, &ts);
-	return time_to_ns(&ts);
-}
 
 static ns_t ns_min(int count, ns_t data[])
 {
@@ -133,54 +116,6 @@ static void regression(ns_t ns[], off_t bytes[], int count, ns_t *atime, float *
 	*atime = intercept;
 	*throughput = 1000.0 / slope;
 }
-
-static ns_t time_read(struct device *dev, off_t pos, size_t size)
-{
-	static char readbuf[64 * 1024 * 1024] __attribute__((aligned(4096)));
-	ns_t now = get_ns();
-	ssize_t ret;
-
-	if (size > sizeof(readbuf))
-		return -ENOMEM;
-
-	do {
-		ret = pread(dev->fd, readbuf, size, pos % dev->size);
-		if (ret > 0) {
-			size -= ret;
-			pos += ret;
-		}
-	} while (ret > 0 || errno == -EAGAIN);
-
-	if (ret)
-		return -errno;
-
-	return get_ns() - now;
-}
-
-#if 0
-static ns_t time_write(struct device *dev, off_t pos, size_t size)
-{
-	static char writebuf[64 * 1024 * 1024] __attribute__((aligned(4096)));
-	ns_t now = get_ns();
-	ssize_t ret;
-
-	if (size > sizeof(writebuf))
-		return -ENOMEM;
-
-	do {
-		ret = pwrite(dev->fd, writebuf, size, pos % dev->size);
-		if (ret > 0) {
-			size -= ret;
-			pos += ret;
-		}
-	} while (ret > 0 || errno == -EAGAIN);
-
-	if (ret)
-		return -errno;
-
-	return get_ns() - now;
-}
-#endif
 
 static void flush_read_cache(struct device *dev)
 {
@@ -476,17 +411,6 @@ static int try_read_alignments(struct device *dev, int tries, int blocksize)
 	return 0;
 }
 
-static void set_rtprio(void)
-{
-	int ret;
-	struct sched_param p = {
-		.sched_priority = 10,
-	};
-	ret = sched_setscheduler(0, SCHED_FIFO, &p);
-	if (ret)
-		perror("sched_setscheduler");
-}
-
 static void print_help(const char *name)
 {
 	printf("%s [OPTION]... [DEVICE]\n", name);
@@ -615,25 +539,6 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 	return 0;
 }
 
-static int setup_dev(struct device *dev, struct arguments *args)
-{
-	set_rtprio();
-
-	dev->fd = open(args->dev, O_RDWR | O_DIRECT | O_SYNC | O_NOATIME);
-	if (dev->fd < 0) {
-		perror("open");
-		return -errno;
-	}
-
-	dev->size = lseek(dev->fd, 0, SEEK_END);
-	if (dev->size < 0) {
-		perror("seek");
-		return -errno;
-	}
-
-	return 0;
-}
-
 static FILE *open_output(const char *filename)
 {
 	if (!filename || !strcmp(filename, "-"))
@@ -651,7 +556,7 @@ int main(int argc, char **argv)
 
 	returnif(parse_arguments(argc, argv, &args));
 
-	returnif(setup_dev(&dev, &args));
+	returnif(setup_dev(&dev, args.dev));
 
 	output = open_output(args.out);
 	if (!output) {
