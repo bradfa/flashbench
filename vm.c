@@ -75,8 +75,11 @@ struct operation {
 		/* reduce dimension */
 		O_REDUCE,
 
+		/* ignore result */
+		O_DROP,
+
 		/* end of list */
-		O_MAX = O_REDUCE,
+		O_MAX = O_DROP,
 	} code;
 
 	/* number of indirect results, if any */
@@ -510,6 +513,23 @@ clear_child:
 	return next;
 }
 
+static struct operation *drop(struct operation *op, struct device *dev,
+		 off_t off, off_t max, size_t len)
+{
+	struct operation *next, *child;
+
+	child = op+1;
+	next = call(child, dev, off, max, len);
+	if (!next)
+		return NULL;
+
+	child->result = res_null;
+	child->r_type = R_NONE;
+	child->size_x = child->size_y = 0;
+
+	return next;
+}
+
 static struct syntax syntax[] = {
 	{ O_END,	"END",		nop,		0 },
 	{ O_READ,	"READ",		do_read,	P_ATOM },
@@ -535,22 +555,22 @@ static struct syntax syntax[] = {
 	{ O_MAX_LIN,	"MAX_LIN",	nop,		P_NUM | P_VAL },
 
 	{ O_REDUCE,	"REDUCE",	reduce,		P_NUM },
+	{ O_DROP,	"DROP",		drop,		},
 };
 
 struct operation program[] = {
 	{ O_REPEAT, 4 },
 	{ O_SEQUENCE, .num = 3 },
 	    { O_PRINT, .string = "Hello, World!\n" },
-	    { O_REPEAT, 1 },
+	    { O_DROP },
 		{ O_PRINTF },
-			    { O_FORMAT },
-		    { O_REDUCE, 8 },
+		    { O_FORMAT },
 			{ O_REDUCE, 8 },
 			    { O_LEN_POW2, 4, 4096 },
 				{ O_OFF_LIN, 8, 4096 },//, .aggregate = A_MINIMUM },
 				    { O_READ },
-		{ O_PRINT, .string = "\n" },
-		{ O_END },
+	    { O_PRINT, .string = "\n" },
+	    { O_END },
 	{ O_END },
 };
 
