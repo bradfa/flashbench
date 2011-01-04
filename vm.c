@@ -168,6 +168,28 @@ static struct operation *do_read(struct operation *op, struct device *dev,
 	return op+1;
 }
 
+static struct operation *do_write(struct operation *op, struct device *dev,
+		 off_t off, off_t max, size_t len)
+{
+	enum writebuf writebuf;
+	switch (op->code) {
+	case O_WRITE_ZERO:
+		writebuf = WBUF_ZERO;
+		break;
+	case O_WRITE_ONE:
+		writebuf = WBUF_ONE;
+		break;
+	case O_WRITE_RAND:
+		writebuf = WBUF_RAND;
+		break;
+	default:
+		return NULL;
+	}
+	op->result.l = time_write(dev, off, len, writebuf);
+	op->r_type = R_NS;
+	return op+1;
+}
+
 static struct operation *length_or_offs(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
@@ -482,9 +504,9 @@ static struct operation *drop(struct operation *op, struct device *dev,
 static struct syntax syntax[] = {
 	{ O_END,	"END",		nop,		},
 	{ O_READ,	"READ",		do_read,	},
-	{ O_WRITE_ZERO,	"WRITE_ZERO",	nop,		},
-	{ O_WRITE_ONE,	"WRITE_ONE",	nop,		},
-	{ O_WRITE_RAND,	"WRITE_RAND",	nop,		},
+	{ O_WRITE_ZERO,	"WRITE_ZERO",	do_write,	},
+	{ O_WRITE_ONE,	"WRITE_ONE",	do_write,	},
+	{ O_WRITE_RAND,	"WRITE_RAND",	do_write,	},
 	{ O_ERASE,	"ERASE",	nop,		},
 	{ O_LENGTH,	"LENGTH",	length_or_offs	},
 	{ O_OFFSET,	"OFFSET",	length_or_offs,	},
