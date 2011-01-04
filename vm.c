@@ -168,10 +168,18 @@ static struct operation *do_read(struct operation *op, struct device *dev,
 	return op+1;
 }
 
+static struct operation *length_or_offs(struct operation *op, struct device *dev,
+		 off_t off, off_t max, size_t len)
+{
+	op->result.l = (op->code == O_LENGTH) ? (long long)len : off;
+	op->r_type = R_BYTE;
+	return op+1;
+}
+
 static res_t format_value(res_t val, enum resulttype type,
 			unsigned int size_x, unsigned int size_y)
 {
-	long long ns = val.l;
+	long long l = val.l;
 	unsigned int x;
 	res_t *res;
 	res_t out;
@@ -189,15 +197,27 @@ static res_t format_value(res_t val, enum resulttype type,
 		else
 			out = to_res(res_ptr(val), R_STRING);
 		break;
-	case R_NS:
-		if (ns < 1000)
-			snprintf(out.s, 8, "%lldns", ns);
-		else if (ns < 1000 * 1000)
-			snprintf(out.s, 8, "%.3gµs", ns / 1000.0);
-		else if (ns < 1000 * 1000 * 1000)
-			snprintf(out.s, 8, "%.3gms", ns / 1000000.0);
+
+	case R_BYTE:
+		if (l < 1024)
+			snprintf(out.s, 8, "%lldB", l);
+		else if (l < 1024 * 1024)
+			snprintf(out.s, 8, "%.3gKiB", l / 1024.0);
+		else if (l < 1024 * 1024 * 1024)
+			snprintf(out.s, 8, "%.3gMiB", l / (1024.0 * 1024.0));
 		else
-			snprintf(out.s, 8, "%.4gs", ns / 1000000000.0);
+			snprintf(out.s, 8, "%.4gGiB", l / (1024.0 * 1024.0 * 1024.0));
+		break;
+
+	case R_NS:
+		if (l < 1000)
+			snprintf(out.s, 8, "%lldns", l);
+		else if (l < 1000 * 1000)
+			snprintf(out.s, 8, "%.3gµs", l / 1000.0);
+		else if (l < 1000 * 1000 * 1000)
+			snprintf(out.s, 8, "%.3gms", l / 1000000.0);
+		else
+			snprintf(out.s, 8, "%.4gs", l / 1000000000.0);
 		break;
 	default:
 		out = res_null;
@@ -461,11 +481,13 @@ static struct operation *drop(struct operation *op, struct device *dev,
 
 static struct syntax syntax[] = {
 	{ O_END,	"END",		nop,		},
-	{ O_READ,	"READ",		do_read,	P_ATOM },
-	{ O_WRITE_ZERO,	"WRITE_ZERO",	nop,		P_ATOM },
-	{ O_WRITE_ONE,	"WRITE_ONE",	nop,		P_ATOM },
-	{ O_WRITE_RAND,	"WRITE_RAND",	nop,		P_ATOM },
-	{ O_ERASE,	"ERASE",	nop,		P_ATOM },
+	{ O_READ,	"READ",		do_read,	},
+	{ O_WRITE_ZERO,	"WRITE_ZERO",	nop,		},
+	{ O_WRITE_ONE,	"WRITE_ONE",	nop,		},
+	{ O_WRITE_RAND,	"WRITE_RAND",	nop,		},
+	{ O_ERASE,	"ERASE",	nop,		},
+	{ O_LENGTH,	"LENGTH",	length_or_offs	},
+	{ O_OFFSET,	"OFFSET",	length_or_offs,	},
 
 	{ O_PRINT,	"PRINT",	print_string,	P_STRING },
 	{ O_PRINTF,	"PRINTF",	print_val,	},

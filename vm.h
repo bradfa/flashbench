@@ -32,6 +32,8 @@ struct operation {
 		O_WRITE_ONE,
 		O_WRITE_RAND,
 		O_ERASE,
+		O_LENGTH,
+		O_OFFSET,
 
 		/* output */
 		O_PRINT,
