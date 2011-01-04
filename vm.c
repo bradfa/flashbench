@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "dev.h"
 #include "vm.h"
@@ -221,28 +222,29 @@ static res_t format_value(res_t val, enum resulttype type,
 			out = val;
 		else
 			out = to_res(res_ptr(val), R_STRING);
-		break;
+
+		return out;
 
 	case R_BYTE:
 		if (l < 1024)
-			snprintf(out.s, 8, "%lldB", l);
+			snprintf(out.s, 8, "%0lldB", l);
 		else if (l < 1024 * 1024)
-			snprintf(out.s, 8, "%.3gKiB", l / 1024.0);
+			snprintf(out.s, 8, "%0.3gKiB", l / 1024.0);
 		else if (l < 1024 * 1024 * 1024)
-			snprintf(out.s, 8, "%.3gMiB", l / (1024.0 * 1024.0));
+			snprintf(out.s, 8, "%0.3gMiB", l / (1024.0 * 1024.0));
 		else
-			snprintf(out.s, 8, "%.4gGiB", l / (1024.0 * 1024.0 * 1024.0));
+			snprintf(out.s, 8, "%0.4gGiB", l / (1024.0 * 1024.0 * 1024.0));
 		break;
 
 	case R_BPS:
 		if (l < 1024)
-			snprintf(out.s, 8, "%lldB/s", l);
+			snprintf(out.s, 8, "%0lldB/s", l);
 		else if (l < 1024 * 1024)
-			snprintf(out.s, 8, "%.3gK/s", l / 1024.0);
+			snprintf(out.s, 8, "%.03gK/s", l / 1024.0);
 		else if (l < 1024 * 1024 * 1024)
-			snprintf(out.s, 8, "%.3gM/s", l / (1024.0 * 1024.0));
+			snprintf(out.s, 8, "%.03gM/s", l / (1024.0 * 1024.0));
 		else
-			snprintf(out.s, 8, "%.4gG/s", l / (1024.0 * 1024.0 * 1024.0));
+			snprintf(out.s, 8, "%.04gG/s", l / (1024.0 * 1024.0 * 1024.0));
 		break;
 		
 
@@ -257,8 +259,12 @@ static res_t format_value(res_t val, enum resulttype type,
 			snprintf(out.s, 8, "%.4gs", l / 1000000000.0);
 		break;
 	default:
-		out = res_null;
+		return res_null;
 	}
+
+	for (x = strlen(out.s); x<7; x++)
+		out.s[x] = ' ';
+	out.s[7] = '\0';
 
 	return out;
 }

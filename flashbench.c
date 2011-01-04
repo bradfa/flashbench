@@ -462,65 +462,57 @@ static int try_program(struct device *dev)
 	};
 #endif	
 
+#if 1
+	/* show effect of type of access within AU */
 	struct operation program[] = {
-		{O_LEN_POW2, 11, -512},
-		{O_SEQUENCE, 3},
-			{O_DROP},
-				{O_PRINTF},
-				{O_FORMAT},
-				{O_LENGTH},
-			{O_PRINT, .string = " linear write0/write1/writerand/read\n"},
-			{O_OFF_FIXED, .val = 1024 * 4096 * 4}, {O_DROP},
-			{O_SEQUENCE, 10},
-				{O_DROP}, {O_LEN_FIXED, .val = 1024 * 4096},
-					{O_WRITE_RAND},
-				{O_PRINTF}, {O_FORMAT},
-					{O_REDUCE, .aggregate = A_AVERAGE},
-					{O_BPS},
-					{O_OFF_LIN, 8192, -1},
-					{O_WRITE_ZERO},
-				{O_PRINTF}, {O_FORMAT},
-					{O_REDUCE, .aggregate = A_AVERAGE},
-					{O_BPS},
-					{O_OFF_LIN, 8192, -1},
-					{O_WRITE_ONE},
-				{O_PRINTF}, {O_FORMAT},
-					{O_REDUCE, .aggregate = A_AVERAGE},
-					{O_BPS},
-					{O_OFF_LIN, 8192, -1},
-					{O_WRITE_RAND},
-				{O_PRINTF}, {O_FORMAT},
-					{O_REDUCE, .aggregate = A_AVERAGE},
-					{O_BPS},
-					{O_OFF_LIN, 8192, -1},
-					{O_READ},
-				{O_PRINTF}, {O_FORMAT},
-					{O_REDUCE, .aggregate = A_AVERAGE},
-					{O_BPS},
-					{O_OFF_RAND, 8192, -1},
-					{O_WRITE_ZERO},
-				{O_PRINTF}, {O_FORMAT},
-					{O_REDUCE, .aggregate = A_AVERAGE},
-					{O_BPS},
-					{O_OFF_RAND, 8192, -1},
-					{O_WRITE_ONE},
-				{O_PRINTF}, {O_FORMAT},
-					{O_REDUCE, .aggregate = A_AVERAGE},
-					{O_BPS},
-					{O_OFF_RAND, 8192, -1},
-					{O_WRITE_RAND},
-				{O_PRINTF}, {O_FORMAT},
-					{O_REDUCE, .aggregate = A_AVERAGE},
-					{O_BPS},
-					{O_OFF_RAND, 8192, -1},
-					{O_READ},
-				{O_NEWLINE},
-				{O_END},
-			{O_END},
-		{O_END},
+            /* loop through power of two multiple of one sector */
+            {O_LEN_POW2, 11, -512},
+            {O_SEQUENCE, 3},
+                /* print block size */
+                {O_DROP},
+                    {O_PRINTF},
+                    {O_FORMAT},
+                    {O_LENGTH},
+                /* start four units into the device, to skip FAT */
+                {O_OFF_FIXED, .val = 1024 * 4096 * 4}, {O_DROP},
+                    /* print one line of aggregated
+                        per second results */
+                    {O_PRINTF}, {O_FORMAT}, {O_SEQUENCE, 9},
+                        /* write one block to clear state of block,
+                           ignore result */
+                        {O_DROP}, {O_LEN_FIXED, .val = 1024 * 4096},
+                                {O_WRITE_RAND},
+                        /* linear write zeroes */
+                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                                {O_OFF_LIN, 8192, -1}, {O_WRITE_ZERO},
+                        /* linear write ones */
+                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                                {O_OFF_LIN, 8192, -1}, {O_WRITE_ONE},
+                        /* linear write 0x5a */
+                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                                {O_OFF_LIN, 8192, -1}, {O_WRITE_RAND},
+                        /* linear read */
+                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                                {O_OFF_LIN, 8192, -1}, {O_READ},
+                        /* random write zeroes */
+                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                                {O_OFF_RAND, 8192, -1}, {O_WRITE_ZERO},
+                        /* random write ones */
+                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                                {O_OFF_RAND, 8192, -1}, {O_WRITE_ONE},
+                        /* random write 0x5a */
+                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                                {O_OFF_RAND, 8192, -1}, {O_WRITE_RAND},
+                        /* random read */
+                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                                {O_OFF_RAND, 8192, -1}, {O_READ},
+                        {O_END},
+                {O_NEWLINE},
+                {O_END},
+            {O_END},
 	};
-
-	call(program, dev, 0, 4096 * 1024, 1);
+	call(program, dev, 0, 4096 * 1024, 0);
+#endif
 
 	return 0;
 }
