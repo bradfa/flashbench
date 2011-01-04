@@ -1,3 +1,6 @@
+#define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64
+
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -142,6 +145,9 @@ static struct operation *call(struct operation *op, struct device *dev,
 	if (!(syntax[op->code].param & P_AGGREGATE) != !op->aggregate)
 		return_err("need .aggregate= argument\n");
 
+	if (op->num && res_ptr(op->result))
+		return_err("%s already has result\n", syntax[op->code].name);
+
 	if (op->num && !res_ptr(op->result)) {
 		res_t *data = calloc(sizeof (res_t), op->num);
 		if (!data)
@@ -232,6 +238,7 @@ static struct operation *do_read(struct operation *op, struct device *dev,
 {
 	/* FIXME */
 	pr_debug("read %ld %ld %ld\n", off, max, len);
+	op->result.l = 0;
 	op->r_type = R_NS;
 	return op+1;
 }
@@ -284,6 +291,9 @@ static struct operation *format(struct operation *op, struct device *dev,
 
 	if (op->result.s == res_null.s)
 		return NULL;
+
+	if (op->r_type != R_ARRAY)
+		op->r_type = R_STRING;
 
 	return next;
 }
@@ -347,8 +357,19 @@ static struct operation *sequence(struct operation *op, struct device *dev,
 	unsigned int i;
 	struct operation *next = op+1;
 
-	for (i=0; i<op->num && next; i++)
+	for (i=0; i<op->num; i++) {
 		next = call_aggregate(next, dev, off, max, len, op);
+		if (!next)
+			return NULL;
+	}
+
+	/* immediately fold sequences with a single result */
+	if (op->size_x == 1) {
+		op->r_type = res_type(op->result);
+		op->result = res_ptr(op->result)[0];
+		op->size_x = op->size_y;
+		op->size_y = 0;
+	}
 
 	if (next && next->code != O_END)
 		return_err("sequence needs to end with END command\n");
@@ -401,7 +422,7 @@ static struct operation *repeat(struct operation *op, struct device *dev,
 	return next;
 }
 
-static res_t do_reduce(int num, res_t *input, int aggregate)
+static res_t do_reduce_int(int num, res_t *input, int aggregate)
 {
 	int i;
 	res_t result = { .l = 0 };
@@ -452,12 +473,14 @@ static struct operation *reduce(struct operation *op, struct device *dev,
 
 	/* one-dimensional array */
 	if (child->size_y == 0) {
-		op->result = do_reduce(child->size_x, res_ptr(child->result),
+		if (res_type(child->result) != R_NS)
+			return_err("cannot reduce type %d\n", res_type(child->result));
+
+		op->result = do_reduce_int(child->size_x, res_ptr(child->result),
 					op->aggregate);
 		op->size_x = op->size_y = 0;
 		op->r_type = res_type(child->result);
-
-		return next;
+		goto clear_child;
 	}
 
 	/* two-dimensional array */
@@ -471,13 +494,18 @@ static struct operation *reduce(struct operation *op, struct device *dev,
 			return_err("cannot combine type %d and %d\n",
 				 res_type(in[i]), type);
 
-		res_ptr(op->result)[i] = do_reduce(child->size_x, res_ptr(in[i]),
+		res_ptr(op->result)[i] = do_reduce_int(child->size_x, res_ptr(in[i]),
 						   op->aggregate);
 	}
 	op->result = to_res(res_ptr(op->result), type);
 	op->size_x = child->size_y;
 	op->size_y = 0;
 	op->r_type = R_ARRAY;
+
+clear_child:
+	child->result = res_null;
+	child->size_x = child->size_y = 0;
+	child->r_type = R_NONE;
 
 	return next;
 }
@@ -510,12 +538,15 @@ static struct syntax syntax[] = {
 };
 
 struct operation program[] = {
+	{ O_REPEAT, 4 },
 	{ O_SEQUENCE, .num = 3 },
-		{ O_PRINT, .string = "Hello, World!\n" },
+	    { O_PRINT, .string = "Hello, World!\n" },
+	    { O_REPEAT, 1 },
 		{ O_PRINTF },
+			    { O_FORMAT },
+		    { O_REDUCE, 8 },
 			{ O_REDUCE, 8 },
 			    { O_LEN_POW2, 4, 4096 },
-			    { O_FORMAT },
 				{ O_OFF_LIN, 8, 4096 },//, .aggregate = A_MINIMUM },
 				    { O_READ },
 		{ O_PRINT, .string = "\n" },
