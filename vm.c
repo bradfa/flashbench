@@ -292,10 +292,10 @@ static void *print_value(res_t val, enum resulttype type,
 		break;
 	case R_BYTE:
 	case R_NS:
-		printf("%lld", val.l);
+		printf("%lld ", val.l);
 		break;
 	case R_STRING:
-		printf("%s", val.s);
+		printf("%s ", val.s);
 		break;
 	default:
 		return NULL;
@@ -351,6 +351,12 @@ static struct operation *sequence(struct operation *op, struct device *dev,
 	return next+1;
 }
 
+static struct operation *len_fixed(struct operation *op, struct device *dev,
+		 off_t off, off_t max, size_t len)
+{
+	return call_propagate(op+1, dev, off, max, op->val, op);
+}
+
 static struct operation *len_pow2(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
@@ -360,8 +366,16 @@ static struct operation *len_pow2(struct operation *op, struct device *dev,
 	if (!len)
 		len = 1;
 
-	for (i = 0; i < op->num && next; i++)
-		next = call_aggregate(op+1, dev, off, max, len * op->val << i, op);
+	if (op->val > 0) {
+		for (i = 0; i < op->num && next; i++)
+			next = call_aggregate(op+1, dev, off, max,
+					 len * op->val << i, op);
+	} else {
+		for (i = op->num; i>0 && next; i--)
+			next = call_aggregate(op+1, dev, off, max,
+					 len * (-op->val/2) << i, op);
+
+	}
 
 	return next;
 }
@@ -389,6 +403,95 @@ static struct operation *off_lin(struct operation *op, struct device *dev,
 
 	for (i = 0; i < num && next; i++)
 		next = call_aggregate(op+1, dev, off + i * val, max, len, op);
+
+	return next;
+}
+
+/*
+ * Linear feedback shift register
+ *
+ * We use this to randomize the block positions for random-access
+ * tests. Unlike real random data, we know that within 2^bits
+ * accesses, every possible value up to 2^bits will be seen
+ * exactly once, with the exception of zero, for which we have
+ * a special treatment.
+ */
+static int lfsr(unsigned short v, unsigned int bits)
+{
+	unsigned short bit;
+
+	if (v >= (1 << bits)) {
+		fprintf(stderr, "lfsr: internal error\n");
+		exit(-1);
+	}
+
+	if (v == 0)
+		v = ((1 << bits) - 1) & 0xace1;
+
+	switch (bits) {
+	case 8: /* x^8 + x^6 + x^5 + x^4 + 1 */
+		bit = ((v >> 0) ^ (v >> 2) ^ (v >> 3) ^ (v >> 4)) & 1;
+		break;
+	case 9: /* x9 + x5 + 1 */
+		bit = ((v >> 0) ^ (v >> 4)) & 1;
+		break;
+	case 10: /* x10 + x7 + 1 */
+		bit = ((v >> 0) ^ (v >> 3)) & 1;
+		break;
+	case 11: /* x11 + x9 + 1 */
+		bit = ((v >> 0) ^ (v >> 2)) & 1;
+		break;
+	case 12:
+		bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 8)) & 1;
+		break;
+	case 13: /* x^13 + x^12 + x^11 + x^8 + 1 */
+		bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 5)) & 1;
+		break;
+	case 14: /* x^14 + x^13 + x^12 + x^2 + 1 */
+		bit = ((v >> 0) ^ (v >> 1) ^ (v >> 2) ^ (v >> 12)) & 1;
+		break;
+	case 15: /* x^15 + x^14 + 1 */
+		bit = ((v >> 0) ^ (v >> 1) ) & 1;
+		break;
+	case 16: /* x^16 + x^14 + x^13 + x^11 + 1 */
+		bit = ((v >> 0) ^ (v >> 2) ^ (v >> 3) ^ (v >> 5) ) & 1;
+		break;
+	default:
+		fprintf(stderr, "lfsr: internal error\n");
+		exit(-1);
+	}
+
+	return v >> 1 | bit << (bits - 1);
+}
+
+static struct operation *off_rand(struct operation *op, struct device *dev,
+		 off_t off, off_t max, size_t len)
+{
+	struct operation *next = op+1;
+	unsigned int i;
+	unsigned int num, val;
+	unsigned int pos = 0, bits = 0;
+
+	if (op->val == -1) {
+		num = max/len;
+		val = max/num;
+	} else {
+		val = op->val;
+		num = op->num;
+	}
+
+	for (i = num; i > 0; i /= 2)
+		bits++;
+
+	if (bits < 8)
+		bits = 8;
+
+	for (i = 0; i < num && next; i++) {
+		do {
+			pos = lfsr(pos, bits);
+		} while (pos > num);
+		next = call_aggregate(op+1, dev, off + i * val, max, len, op);
+	}
 
 	return next;
 }
@@ -531,7 +634,8 @@ static struct syntax syntax[] = {
 	{ O_OFF_FIXED,	"OFF_FIXED",	off_fixed,	P_VAL },
 	{ O_OFF_POW2,	"OFF_POW2",	nop,		P_NUM | P_VAL },
 	{ O_OFF_LIN,	"OFF_LIN",	off_lin,	P_NUM | P_VAL },
-	{ O_OFF_RAND,	"OFF_RAND",	nop,		P_NUM | P_VAL },
+	{ O_OFF_RAND,	"OFF_RAND",	off_rand,	P_NUM | P_VAL },
+	{ O_LEN_FIXED,	"LEN_FIXED",	len_fixed,	P_VAL },
 	{ O_LEN_POW2,	"LEN_POW2",	len_pow2,	P_NUM | P_VAL },
 	{ O_MAX_POW2,	"MAX_POW2",	nop,		P_NUM | P_VAL },
 	{ O_MAX_LIN,	"MAX_LIN",	nop,		P_NUM | P_VAL },

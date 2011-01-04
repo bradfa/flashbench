@@ -50,7 +50,6 @@ long long time_read(struct device *dev, off_t pos, size_t size)
 	} while (ret > 0 || errno == -EAGAIN);
 
 	if (ret) {
-		fprintf(stderr, "fd %d buf %p size %ld pos %ld\n", dev->fd, dev->readbuf, size, pos % dev->size);
 		perror("time_read");
 		return 0;
 	}
@@ -62,12 +61,14 @@ long long time_write(struct device *dev, off_t pos, size_t size, enum writebuf w
 {
 	long long now = get_ns();
 	ssize_t ret;
+	unsigned long *p;
 
 	if (size > MAX_BUFSIZE)
 		return -ENOMEM;
+	p = dev->writebuf[which];
 
 	do {
-		ret = pwrite(dev->fd, dev->writebuf[which], size, pos % dev->size);
+		ret = pwrite(dev->fd, p, size, pos % dev->size);
 		if (ret > 0) {
 			size -= ret;
 			pos += ret;
@@ -97,6 +98,7 @@ static void set_rtprio(void)
 int setup_dev(struct device *dev, const char *filename)
 {
 	int i, err;
+	void *p;
 	set_rtprio();
 
 	dev->fd = open(filename, O_RDWR | O_DIRECT | O_SYNC | O_NOATIME);
@@ -112,18 +114,26 @@ int setup_dev(struct device *dev, const char *filename)
 	}
 
 	err = posix_memalign(&dev->readbuf,		4096, MAX_BUFSIZE);
-	if (err) return -err;
-	err = posix_memalign(&dev->writebuf[WBUF_ZERO], 4096, MAX_BUFSIZE);
-	if (err) return -err;
-	err = posix_memalign(&dev->writebuf[WBUF_ONE],  4096, MAX_BUFSIZE);
-	if (err) return -err;
-	err = posix_memalign(&dev->writebuf[WBUF_RAND], 4096, MAX_BUFSIZE);
-	if (err) return -err;
+	if (err)
+		return -err;
 
-	memset(dev->writebuf[WBUF_ZERO], 0, MAX_BUFSIZE);
-	memset(dev->writebuf[WBUF_ONE], 0xff, MAX_BUFSIZE);
-	for (i = 0; i < MAX_BUFSIZE; i+=256)
-		memset(dev->writebuf[WBUF_RAND] + i, (i & 0xff), 256);
+	err = posix_memalign(&p, 4096, MAX_BUFSIZE);
+	if (err)
+		return -err;
+	memset(p, 0, MAX_BUFSIZE);
+	dev->writebuf[WBUF_ZERO] = p;
+
+	err = posix_memalign(&p,  4096, MAX_BUFSIZE);
+	if (err)
+		return -err;
+	memset(p, 0xff, MAX_BUFSIZE);
+	dev->writebuf[WBUF_ONE] = p;
+
+	err = posix_memalign(&p , 4096, MAX_BUFSIZE);
+	if (err)
+		return -err;
+	memset(p, 0x5a, MAX_BUFSIZE);
+	dev->writebuf[WBUF_RAND] = p;
 
 	return 0;
 }

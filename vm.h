@@ -50,6 +50,7 @@ struct operation {
 		O_OFF_POW2,
 		O_OFF_LIN,
 		O_OFF_RAND,
+		O_LEN_FIXED,
 		O_LEN_POW2,
 		O_MAX_POW2,
 		O_MAX_LIN,
