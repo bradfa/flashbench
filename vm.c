@@ -56,8 +56,8 @@ struct operation {
 		/* output */
 		O_PRINT,
 		O_PRINTF,
-		O_PRINT_MBPS,
 		O_FORMAT,
+		O_NEWLINE,
 
 		/* group */
 		O_SEQUENCE,
@@ -301,7 +301,7 @@ static struct operation *format(struct operation *op, struct device *dev,
 	return next;
 }
 
-static struct operation *print(struct operation *op, struct device *dev,
+static struct operation *print_string(struct operation *op, struct device *dev,
 		 off_t off, off_t max, size_t len)
 {
 	printf("%s", op->string);
@@ -352,6 +352,13 @@ static struct operation *print_val(struct operation *op, struct device *dev,
 		return_err("cannot print value of type %d\n", op->r_type);
 
 	return next;
+}
+
+static struct operation *newline(struct operation *op, struct device *dev,
+		 off_t off, off_t max, size_t len)
+{
+	printf("\n");
+	return op+1;
 }
 
 static struct operation *sequence(struct operation *op, struct device *dev,
@@ -497,7 +504,7 @@ static struct operation *reduce(struct operation *op, struct device *dev,
 			return_err("cannot combine type %d and %d\n",
 				 res_type(in[i]), type);
 
-		res_ptr(op->result)[i] = do_reduce_int(child->size_x, res_ptr(in[i]),
+		res_ptr(op->result)[i] = do_reduce_int(child->size_y, res_ptr(in[i]),
 						   op->aggregate);
 	}
 	op->result = to_res(res_ptr(op->result), type);
@@ -531,17 +538,17 @@ static struct operation *drop(struct operation *op, struct device *dev,
 }
 
 static struct syntax syntax[] = {
-	{ O_END,	"END",		nop,		0 },
+	{ O_END,	"END",		nop,		},
 	{ O_READ,	"READ",		do_read,	P_ATOM },
 	{ O_WRITE_ZERO,	"WRITE_ZERO",	nop,		P_ATOM },
 	{ O_WRITE_ONE,	"WRITE_ONE",	nop,		P_ATOM },
 	{ O_WRITE_RAND,	"WRITE_RAND",	nop,		P_ATOM },
 	{ O_ERASE,	"ERASE",	nop,		P_ATOM },
 
-	{ O_PRINT,	"PRINT",	print,		P_STRING },
-	{ O_PRINTF,	"PRINTF",	print_val,	0 },
-	{ O_PRINT_MBPS,	"PRINT_MBPS",	nop,		0 },
-	{ O_FORMAT,	"FORMAT",	format,		0 },
+	{ O_PRINT,	"PRINT",	print_string,	P_STRING },
+	{ O_PRINTF,	"PRINTF",	print_val,	},
+	{ O_FORMAT,	"FORMAT",	format,		},
+	{ O_NEWLINE,	"NEWLINE",	newline,	},
 
 	{ O_SEQUENCE,	"SEQUENCE",	sequence,	P_NUM },
 	{ O_REPEAT,	"REPEAT",	repeat,		P_NUM },
@@ -554,24 +561,30 @@ static struct syntax syntax[] = {
 	{ O_MAX_POW2,	"MAX_POW2",	nop,		P_NUM | P_VAL },
 	{ O_MAX_LIN,	"MAX_LIN",	nop,		P_NUM | P_VAL },
 
-	{ O_REDUCE,	"REDUCE",	reduce,		P_NUM },
+	{ O_REDUCE,	"REDUCE",	reduce,		P_NUM | P_AGGREGATE },
 	{ O_DROP,	"DROP",		drop,		},
 };
 
 struct operation program[] = {
-	{ O_REPEAT, 4 },
-	{ O_SEQUENCE, .num = 3 },
-	    { O_PRINT, .string = "Hello, World!\n" },
-	    { O_DROP },
-		{ O_PRINTF },
-		    { O_FORMAT },
-			{ O_REDUCE, 8 },
-			    { O_LEN_POW2, 4, 4096 },
-				{ O_OFF_LIN, 8, 4096 },//, .aggregate = A_MINIMUM },
-				    { O_READ },
-	    { O_PRINT, .string = "\n" },
-	    { O_END },
-	{ O_END },
+	{O_REPEAT, 4},
+	{O_SEQUENCE, 3},
+		{O_PRINT, .string = "Hello, World!\n"},
+		{O_DROP},
+			{O_PRINTF},
+			{O_FORMAT},
+			{O_REDUCE, 8, .aggregate = A_AVERAGE},
+			{O_LEN_POW2, 4, 4096},
+			{O_OFF_LIN, 8, 4096 },
+			{O_SEQUENCE, 3},
+				{O_PRINTF},
+					{O_READ},
+				{O_NEWLINE},
+				{O_DROP},
+					{O_READ},
+				{O_END},
+		{O_NEWLINE},
+		{O_END},
+	{O_END},
 };
 
 int main(void)
