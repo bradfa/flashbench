@@ -237,14 +237,14 @@ static res_t format_value(res_t val, enum resulttype type,
 		break;
 
 	case R_BPS:
-		if (l < 1024)
+		if (l < 1000)
 			snprintf(out.s, 8, "%0lldB/s", l);
-		else if (l < 1024 * 1024)
-			snprintf(out.s, 8, "%.03gK/s", l / 1024.0);
-		else if (l < 1024 * 1024 * 1024)
-			snprintf(out.s, 8, "%.03gM/s", l / (1024.0 * 1024.0));
+		else if (l < 1000 * 1000)
+			snprintf(out.s, 8, "%.03gK/s", l / 1000.0);
+		else if (l < 1000 * 1000 * 1000)
+			snprintf(out.s, 8, "%.03gM/s", l / (1000.0 * 1000.0));
 		else
-			snprintf(out.s, 8, "%.04gG/s", l / (1024.0 * 1024.0 * 1024.0));
+			snprintf(out.s, 8, "%.04gG/s", l / (1000.0 * 1000.0 * 1000.0));
 		break;
 		
 
