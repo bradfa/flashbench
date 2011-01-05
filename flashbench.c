@@ -462,7 +462,7 @@ static int try_program(struct device *dev)
 	};
 #endif	
 
-#if 1
+#if 0
 	/* show effect of type of access within AU */
 	struct operation program[] = {
             /* loop through power of two multiple of one sector */
@@ -513,6 +513,60 @@ static int try_program(struct device *dev)
 	};
 	call(program, dev, 0, 4096 * 1024, 0);
 #endif
+
+	/* find maximum number of open AUs */
+	struct operation program[] = {
+            /* loop through power of two multiple of one sector */
+            {O_LEN_POW2, 7, -(64 * 1024)},
+            {O_SEQUENCE, 3},
+                /* print block size */
+                {O_DROP},
+                    {O_PRINTF},
+                    {O_FORMAT},
+                    {O_LENGTH},
+                /* start four units into the device, to skip FAT */
+                {O_OFF_FIXED, .val = 1024 * 4096 * 4}, {O_DROP},
+                    /* print one line of aggregated
+                        per second results */
+                    {O_PRINTF}, {O_FORMAT},
+                    {O_SEQUENCE, 6},
+                        /* linear write 0x5a */
+                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
+                            {O_REDUCE, .aggregate = A_AVERAGE},
+                            {O_OFF_RAND, 8192, -1},
+                            {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                            {O_OFF_LIN, 1, 4096 * 1024}, {O_WRITE_RAND},
+                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
+                            {O_REDUCE, .aggregate = A_AVERAGE},
+                            {O_OFF_RAND, 8192, -1},
+                            {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                            {O_OFF_LIN, 2, 4096 * 1024}, {O_WRITE_RAND},
+                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
+                            {O_REDUCE, .aggregate = A_AVERAGE},
+                            {O_OFF_RAND, 8192, -1},
+                            {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                            {O_OFF_LIN, 3, 4096 * 1024}, {O_WRITE_RAND},
+                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
+                            {O_REDUCE, .aggregate = A_AVERAGE},
+                            {O_OFF_RAND, 8192, -1},
+                            {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                            {O_OFF_LIN, 4, 4096 * 1024}, {O_WRITE_RAND},
+                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
+                            {O_REDUCE, .aggregate = A_AVERAGE},
+                            {O_OFF_RAND, 8192, -1},
+                            {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                            {O_OFF_LIN, 5, 4096 * 1024}, {O_WRITE_RAND},
+                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
+                            {O_REDUCE, .aggregate = A_AVERAGE},
+                            {O_OFF_RAND, 8192, -1},
+                            {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                            {O_OFF_LIN, 8, 4096 * 1024}, {O_WRITE_RAND},
+                        {O_END},
+                {O_NEWLINE},
+                {O_END},
+            {O_END},
+	};
+	call(program, dev, 0, 4096 * 1024, 0);
 
 	return 0;
 }
