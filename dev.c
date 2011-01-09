@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -16,6 +17,8 @@
 #include <string.h>
 #include <getopt.h>
 #include <stdbool.h>
+
+#include <linux/fs.h>
 
 #include "dev.h"
 
@@ -83,6 +86,25 @@ long long time_write(struct device *dev, off_t pos, size_t size, enum writebuf w
 	return get_ns() - now;
 }
 
+long long time_erase(struct device *dev, off_t pos, size_t size)
+{
+	long long now = get_ns();
+	ssize_t ret;
+	unsigned long long args[2] = { size, pos % dev->size };
+
+	if (size > MAX_BUFSIZE)
+		return -ENOMEM;
+
+	ret = ioctl(dev->fd, BLKDISCARD, &args);
+
+	if (ret) {
+		perror("time_erase");
+		return 0;
+	}
+
+	return get_ns() - now;
+}
+
 static void set_rtprio(void)
 {
 	int ret;
@@ -97,7 +119,7 @@ static void set_rtprio(void)
 
 int setup_dev(struct device *dev, const char *filename)
 {
-	int i, err;
+	int err;
 	void *p;
 	set_rtprio();
 
