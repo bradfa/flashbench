@@ -460,13 +460,13 @@ static int try_program(struct device *dev)
 			{O_END},
 		{O_END},
 	};
-#endif	
+#endif
 
 #if 0
 	/* show effect of type of access within AU */
 	struct operation program[] = {
             /* loop through power of two multiple of one sector */
-            {O_LEN_POW2, 11, -512},
+            {O_LEN_POW2, 13, -512},
             {O_SEQUENCE, 3},
                 /* print block size */
                 {O_DROP},
@@ -477,47 +477,72 @@ static int try_program(struct device *dev)
                 {O_OFF_FIXED, .val = 1024 * 4096 * 4}, {O_DROP},
                     /* print one line of aggregated
                         per second results */
-                    {O_PRINTF}, {O_FORMAT}, {O_SEQUENCE, 9},
+                    {O_PRINTF}, {O_SEQUENCE, 8},
                         /* write one block to clear state of block,
                            ignore result */
-                        {O_DROP}, {O_LEN_FIXED, .val = 1024 * 4096},
-                                {O_WRITE_RAND},
-                        /* linear write zeroes */
-                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+//                        {O_DROP}, {O_LEN_FIXED, .val = 1024 * 4096},
+//                                {O_WRITE_RAND},
+#if 1                   /* linear write zeroes */
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
                                 {O_OFF_LIN, 8192, -1}, {O_WRITE_ZERO},
                         /* linear write ones */
-                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
                                 {O_OFF_LIN, 8192, -1}, {O_WRITE_ONE},
+#endif
+#if 0
+			/* Erase */
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_TOTAL},// {O_BPS},
+                                {O_OFF_LIN, 8192, -1}, {O_ERASE},
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_TOTAL},// {O_BPS},
+                                {O_OFF_LIN, 8192, -1}, {O_ERASE},
                         /* linear write 0x5a */
-                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                                {O_OFF_LIN, 8192, -1}, {O_WRITE_RAND},
+#endif
+                        /* linear write 0x5a again */
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
                                 {O_OFF_LIN, 8192, -1}, {O_WRITE_RAND},
                         /* linear read */
-                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
                                 {O_OFF_LIN, 8192, -1}, {O_READ},
+#if 1
                         /* random write zeroes */
-                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
                                 {O_OFF_RAND, 8192, -1}, {O_WRITE_ZERO},
                         /* random write ones */
-                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
                                 {O_OFF_RAND, 8192, -1}, {O_WRITE_ONE},
+#endif
+#if 0
+                        /* random erase */
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_AVERAGE},// {O_BPS},
+                                {O_OFF_RAND, 8192, -1}, {O_ERASE},
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_AVERAGE},// {O_BPS},
+                                {O_OFF_RAND, 8192, -1}, {O_ERASE},
                         /* random write 0x5a */
-                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                                {O_OFF_RAND, 8192, -1}, {O_WRITE_RAND},
+#endif
+                        /* random write 0x5a again */
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
                                 {O_OFF_RAND, 8192, -1}, {O_WRITE_RAND},
                         /* random read */
-                        {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
+                        {O_FORMAT},{O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
                                 {O_OFF_RAND, 8192, -1}, {O_READ},
                         {O_END},
                 {O_NEWLINE},
                 {O_END},
             {O_END},
 	};
-	call(program, dev, 0, 4096 * 1024, 0);
+	call(program, dev, 0, 1 * 4096 * 1024, 0);
 #endif
 
+#if 1
 	/* find maximum number of open AUs */
 	struct operation program[] = {
             /* loop through power of two multiple of one sector */
-            {O_LEN_POW2, 7, -(64 * 1024)},
+//            {O_LEN_POW2, 7, -(64 * 1024)},
+            {O_LEN_POW2, 9, -512},
             {O_SEQUENCE, 3},
                 /* print block size */
                 {O_DROP},
@@ -529,44 +554,75 @@ static int try_program(struct device *dev)
                     /* print one line of aggregated
                         per second results */
                     {O_PRINTF}, {O_FORMAT},
-                    {O_SEQUENCE, 6},
+                    {O_SEQUENCE, 3},
                         /* linear write 0x5a */
                         {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
                             {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_RAND, 8192, -1},
+                            {O_OFF_LIN, 8192, -1},
                             {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
-                            {O_OFF_LIN, 1, 4096 * 1024}, {O_WRITE_RAND},
+                            {O_OFF_RAND, 1, 4 * 1024 * 1024}, {O_WRITE_RAND},
                         {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
                             {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_RAND, 8192, -1},
+                            {O_OFF_LIN, 8192, -1},
                             {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
-                            {O_OFF_LIN, 2, 4096 * 1024}, {O_WRITE_RAND},
+                            {O_OFF_RAND, 2, 4 * 1024 * 1024}, {O_WRITE_RAND},
                         {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
                             {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_RAND, 8192, -1},
+                            {O_OFF_LIN, 8192, -1},
                             {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
-                            {O_OFF_LIN, 3, 4096 * 1024}, {O_WRITE_RAND},
-                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
+                            {O_OFF_RAND, 3, 4 * 1024 * 1024}, {O_WRITE_RAND},
+#if 0
+			{O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 1},
                             {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_RAND, 8192, -1},
+                            {O_OFF_LIN, 8192, -1},
                             {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
-                            {O_OFF_LIN, 4, 4096 * 1024}, {O_WRITE_RAND},
-                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
+                            {O_OFF_RAND, 4, 4 * 1024 * 1024}, {O_WRITE_RAND},
+                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 1},
                             {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_RAND, 8192, -1},
+                            {O_OFF_LIN, 8192, -1},
                             {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
-                            {O_OFF_LIN, 5, 4096 * 1024}, {O_WRITE_RAND},
-                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
+                            {O_OFF_RAND, 5, 4 * 1024 * 1024}, {O_WRITE_RAND},
+                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 1},
                             {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_RAND, 8192, -1},
+                            {O_OFF_LIN, 8192, -1},
                             {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
-                            {O_OFF_LIN, 8, 4096 * 1024}, {O_WRITE_RAND},
+                            {O_OFF_RAND, 8, 4 * 1024 * 1024}, {O_WRITE_RAND},
+#endif
                         {O_END},
                 {O_NEWLINE},
                 {O_END},
             {O_END},
 	};
-	call(program, dev, 0, 4096 * 1024, 0);
+	call(program, dev, 0, 4 * 1024 * 1024, 0);
+#endif
+
+#if 0
+	/* Find FAT Units */
+	struct operation program[] = {
+            /* loop through power of two multiple of one sector */
+//            {O_LEN_POW2, 7, -(64 * 1024)},
+            {O_LEN_POW2, 14, -512},
+            {O_SEQUENCE, 3},
+                /* print block size */
+                {O_DROP},
+                    {O_PRINTF},
+                    {O_FORMAT},
+                    {O_LENGTH},
+                /* print one line of aggregated
+                    per second results */
+                {O_PRINTF}, {O_FORMAT},
+		    {O_OFF_LIN, 3, 4 * 1024 * 1024},
+                        /* linear write 0x5a */
+                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 1},
+                            {O_REDUCE, .aggregate = A_AVERAGE},
+                            {O_OFF_LIN, 8192, -1},
+                            {O_BPS},{O_WRITE_RAND},
+                {O_NEWLINE},
+                {O_END},
+            {O_END},
+	};
+	call(program, dev, 0, 4 * 1024 * 1024, 0);
+#endif
 
 	return 0;
 }

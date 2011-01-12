@@ -99,7 +99,6 @@ long long time_erase(struct device *dev, off_t pos, size_t size)
 
 	if (ret) {
 		perror("time_erase");
-		return 0;
 	}
 
 	return get_ns() - now;
