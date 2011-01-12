@@ -185,7 +185,7 @@ static void print_one_blocksize(int count, ns_t *times, off_t blocksize)
 	format_ns(avg, ns_avg(count, times));
 	format_ns(max, ns_max(count, times));
 
-	printf("%ld bytes: min %s avg %s max %s: %g MB/s\n", blocksize,
+	printf("%lld bytes: min %s avg %s max %s: %g MB/s\n", (long long)blocksize,
 		 min, avg, max, blocksize / (ns_min(count, times) / 1000.0));
 }
 
@@ -264,8 +264,8 @@ static int try_align(struct device *dev)
 		format_ns(buf_a, aligned[i]);
 		format_ns(buf_u, unaligned[i]);
 
-		printf("%ld bytes: aligned %s unaligned %s diff %lld, %02g%% min %02g%% avg\n",
-			blocksize, buf_a, buf_u, unaligned[i] - aligned[i],
+		printf("%lld bytes: aligned %s unaligned %s diff %lld, %02g%% min %02g%% avg\n",
+			(long long)blocksize, buf_a, buf_u, unaligned[i] - aligned[i],
 			 100.0 * (unaligned[i] - aligned[i]) / aligned[i],
 			 100.0 * (avg_u - avg_a) / avg_a);
 	}
@@ -389,7 +389,7 @@ static int try_read_alignment(struct device *dev, int tries, int count,
 	format_ns(on_s,   ns_avg(count, on));
 	format_ns(post_s, ns_avg(count, post));
 	format_ns(diff_s, ns_avg(count, on) - (ns_avg(count, pre) + ns_avg(count, post)) / 2);
-	printf("align %ld\tpre %s\ton %s\tpost %s\tdiff %s\n", align, pre_s, on_s, post_s, diff_s);
+	printf("align %lld\tpre %s\ton %s\tpost %s\tdiff %s\n", (long long)align, pre_s, on_s, post_s, diff_s);
 
 	return 0;
 }

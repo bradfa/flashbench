@@ -53,7 +53,8 @@ struct operation *call(struct operation *op, struct device *dev,
 	if (!op)
 		return_err("internal error: NULL operation\n");
 
-	pr_debug("call %s %ld %ld %ld\n", syntax[op->code].name, off, max, len);
+	pr_debug("call %s %lld %lld %ld\n", syntax[op->code].name,
+		(long long)off, (long long)max, (long)len);
 
 	if (op->code > O_MAX)
 		return_err("illegal command code %d\n", op->code);
@@ -468,8 +469,8 @@ static struct operation *off_lin(struct operation *op, struct device *dev,
 
 	if (op->val == -1) {
 		if (len == 0 || max < (off_t)len)
-			return_err("cannot fill %ld bytes with %ld byte chunks\n",
-					max, len);
+			return_err("cannot fill %lld bytes with %ld byte chunks\n",
+					(long long)max, (long)len);
 
 		num = max/len;
 		val = max/num;
@@ -551,8 +552,8 @@ static struct operation *off_rand(struct operation *op, struct device *dev,
 
 	if (op->val == -1) {
 		if (len == 0 || max < (off_t)len)
-			return_err("cannot fill %ld bytes with %ld byte chunks\n",
-					max, len);
+			return_err("cannot fill %lld bytes with %ld byte chunks\n",
+					(long long)max, (long)len);
 
 		num = max/len;
 		val = max/num;

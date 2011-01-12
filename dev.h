@@ -7,7 +7,7 @@ struct device {
 	void *readbuf;
 	void *writebuf[3];
 	int fd;
-	ssize_t size;
+	off_t size;
 };
 
 enum writebuf {
