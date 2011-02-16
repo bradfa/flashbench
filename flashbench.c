@@ -634,9 +634,12 @@ static void print_help(const char *name)
 	printf("-o, --out=FILE	write output to FILE instead of stdout\n");
 	printf("-s, --scatter	run scatter read test\n");
 	printf("    --scatter-order=N scatter across 2^N blocks\n");
+	printf("    --scatter-span=N span each write across N blocks\n");
 	printf("-r, --rcache	determine read cache size\n");
 	printf("-v, --verbose	increase verbosity of output\n");
-	printf("-c, --count=N	run each test N times (default: 8\n");	
+	printf("-c, --count=N	run each test N times (default: 8\n");
+	printf("-b, --blocksize=N use a blocksize of N (default:16K)\n");
+	printf("-e, --erasesize=N use a eraseblocksize of N (default:4M)\n");
 }
 
 struct arguments {
@@ -645,6 +648,7 @@ struct arguments {
 	bool scatter, rcache, align, interval, program;
 	int count;
 	int blocksize;
+	int erasesize;
 	int scatter_order;
 	int scatter_span;
 	int interval_order;
@@ -664,14 +668,16 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 		{ "verbose", 0, NULL, 'v' },
 		{ "count", 1, NULL, 'c' },
 		{ "blocksize", 1, NULL, 'b' },
+		{ "erasesize", 1, NULL, 'e' },
 		{ NULL, 0, NULL, 0 },
 	};
 
 	memset(args, 0, sizeof(*args));
 	args->count = 8;
-	args->scatter_order = 12;
-	args->scatter_span = 8;
-	args->blocksize = 8192;
+	args->scatter_order = 9;
+	args->scatter_span = 1;
+	args->blocksize = 16384;
+	args->erasesize = 4 * 1024 * 1024;
 
 	while (1) {
 		int c;
@@ -728,6 +734,10 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 
 		case 'b':
 			args->blocksize = atoi(optarg);
+			break;
+
+		case 'e':
+			args->erasesize = atoi(optarg);
 			break;
 
 		case '?':
