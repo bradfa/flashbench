@@ -354,7 +354,7 @@ static int try_scatter_io(struct device *dev, int tries, int scatter_order,
 	}
 
 	for (j = 0; j < count; j++) {
-		fprintf(out, "%d	%lld\n", j * blocksize, min[j]);
+		fprintf(out, "%f	%f\n", j * blocksize / (1024 * 1024.0), min[j] / 1000000.0);
 	}
 
 	return 0;
