@@ -460,12 +460,28 @@ static int try_program(struct device *dev)
 	call(program, dev, 0, 4 * 1024 * 1024, 0);
 #endif
 
-#if 0
+	return 0;
+}
+
+static unsigned int find_order(unsigned int large, unsigned int small)
+{
+	unsigned int o;
+
+	for (o=1; small < large; small <<= 1)
+		o++;
+
+	return o;
+}
+
+static int try_find_fat(struct device *dev, unsigned int erasesize,
+				unsigned int blocksize,
+				unsigned int count,
+				bool random)
+{
 	/* Find FAT Units */
 	struct operation program[] = {
             /* loop through power of two multiple of one sector */
-//            {O_LEN_POW2, 7, -(64 * 1024)},
-            {O_LEN_POW2, 14, -512},
+            {O_LEN_POW2, find_order(erasesize, blocksize), - (long long)blocksize},
             {O_SEQUENCE, 3},
                 /* print block size */
                 {O_DROP},
@@ -475,21 +491,21 @@ static int try_program(struct device *dev)
                 /* print one line of aggregated
                     per second results */
                 {O_PRINTF}, {O_FORMAT},
-		    {O_OFF_LIN, 3, 4 * 1024 * 1024},
+		    {random ? O_OFF_RAND : O_OFF_LIN, count, erasesize},
                         /* linear write 0x5a */
                         {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 1},
                             {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_LIN, 8192, -1},
+                            {O_OFF_LIN, erasesize / blocksize, -1},
                             {O_BPS},{O_WRITE_RAND},
                 {O_NEWLINE},
                 {O_END},
             {O_END},
 	};
-	call(program, dev, 0, 4 * 1024 * 1024, 0);
-#endif
+	call(program, dev, 0, erasesize, 0);
 
 	return 0;
 }
+
 
 static void print_help(const char *name)
 {
@@ -499,22 +515,27 @@ static void print_help(const char *name)
 	printf("-s, --scatter	run scatter read test\n");
 	printf("    --scatter-order=N scatter across 2^N blocks\n");
 	printf("    --scatter-span=N span each write across N blocks\n");
+	printf("-f, --find-fat	analyse first few erase blocks\n");
+	printf("    --fat-nr=N	look through first N erase blocks (default: 6)\n");
+	printf("-r, --random	use pseudorandom access with erase block\n");
 	printf("-v, --verbose	increase verbosity of output\n");
 	printf("-c, --count=N	run each test N times (default: 8\n");
 	printf("-b, --blocksize=N use a blocksize of N (default:16K)\n");
-	printf("-e, --erasesize=N use a eraseblocksize of N (default:4M)\n");
+	printf("-e, --erasesize=N use a eraseblock size of N (default:4M)\n");
 }
 
 struct arguments {
 	const char *dev;
 	const char *out;
-	bool scatter, interval, program;
+	bool scatter, interval, program, fat;
+	bool random;
 	int count;
 	int blocksize;
 	int erasesize;
 	int scatter_order;
 	int scatter_span;
 	int interval_order;
+	int fat_nr;
 };
 
 static int parse_arguments(int argc, char **argv, struct arguments *args)
@@ -526,6 +547,9 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 		{ "scatter-span", 1, NULL, '$' },
 		{ "interval", 0, NULL, 'i' },
 		{ "interval-order", 1, NULL, 'I' },
+		{ "findfat", 0, NULL, 'f' },
+		{ "fat-nr", 1, NULL, 'F' },
+		{ "random", 0, NULL, 'r' },
 		{ "verbose", 0, NULL, 'v' },
 		{ "count", 1, NULL, 'c' },
 		{ "blocksize", 1, NULL, 'b' },
@@ -543,7 +567,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 	while (1) {
 		int c;
 
-		c = getopt_long(argc, argv, "o:sraivc:b:p", long_options, &optind);
+		c = getopt_long(argc, argv, "o:sifF:vrc:b:e:p", long_options, &optind);
 
 		if (c == -1)
 			break;
@@ -572,6 +596,17 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 		case 'I':
 			args->interval_order = atoi(optarg);
 			break;
+
+		case 'f':
+			args->fat = 1;
+			break;
+
+		case 'F':
+			args->fat_nr = atoi(optarg);
+			break;
+
+		case 'r':
+			args->random = 1;
 
 		case 'p':
 			args->program = 1;
@@ -607,7 +642,8 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 
 	args->dev = argv[optind];
 
-	if (!(args->scatter || args->interval || args->program)) {
+	if (!(args->scatter || args->interval || args->program ||
+	      args->fat)) {
 		fprintf(stderr, "%s: need at least one action\n", argv[0]);
 		return -EINVAL;
 	}
@@ -656,6 +692,16 @@ int main(int argc, char **argv)
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_scatter_io");
+			return ret;
+		}
+	}
+
+	if (args.fat) {
+		ret = try_find_fat(&dev, args.erasesize, args.blocksize,
+				   args.count, args.random);
+		if (ret < 0) {
+			errno = -ret;
+			perror("find_fat");
 			return ret;
 		}
 	}

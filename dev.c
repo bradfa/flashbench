@@ -124,7 +124,7 @@ int setup_dev(struct device *dev, const char *filename)
 
 	dev->fd = open(filename, O_RDWR | O_DIRECT | O_SYNC | O_NOATIME);
 	if (dev->fd < 0) {
-		perror("open");
+		perror(filename);
 		return -errno;
 	}
 
