@@ -643,7 +643,6 @@ struct arguments {
 	const char *dev;
 	const char *out;
 	bool scatter, rcache, align, interval, program;
-	int verbosity;
 	int count;
 	int blocksize;
 	int scatter_order;
@@ -720,7 +719,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 			break;
 
 		case 'v':
-			args->verbosity++;
+			verbose++;
 			break;
 
 		case 'c':
@@ -785,7 +784,7 @@ int main(int argc, char **argv)
 		return -errno;
 	}
 
-	if (args.verbosity) {
+	if (verbose > 1) {
 		printf("filename: \"%s\"\n", argv[1]);
 		printf("filesize: 0x%llx\n", (unsigned long long)dev.size);
 	}
