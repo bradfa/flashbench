@@ -276,6 +276,16 @@ static int try_scatter_io(struct device *dev, int tries, int scatter_order,
 	return 0;
 }
 
+static unsigned int find_order(unsigned int large, unsigned int small)
+{
+	unsigned int o;
+
+	for (o=1; small < large; small <<= 1)
+		o++;
+
+	return o;
+}
+
 static int try_program(struct device *dev)
 {
 #if 0
@@ -326,7 +336,7 @@ static int try_program(struct device *dev)
 	};
 #endif
 
-#if 0
+#if 1
 	/* show effect of type of access within AU */
 	struct operation program[] = {
             /* loop through power of two multiple of one sector */
@@ -401,76 +411,43 @@ static int try_program(struct device *dev)
 	call(program, dev, 0, 1 * 4096 * 1024, 0);
 #endif
 
-#if 1
+	return 0;
+}
+
+static int try_open_au(struct device *dev, unsigned int erasesize,
+			unsigned int blocksize,
+			unsigned int count,
+			bool random)
+{
 	/* find maximum number of open AUs */
 	struct operation program[] = {
             /* loop through power of two multiple of one sector */
-//            {O_LEN_POW2, 7, -(64 * 1024)},
-            {O_LEN_POW2, 9, -512},
+            {O_LEN_POW2, find_order(erasesize, blocksize), -(long long)blocksize},
             {O_SEQUENCE, 3},
                 /* print block size */
                 {O_DROP},
                     {O_PRINTF},
                     {O_FORMAT},
                     {O_LENGTH},
-                /* start four units into the device, to skip FAT */
-                {O_OFF_FIXED, .val = 1024 * 4096 * 4}, {O_DROP},
+                /* start 16 MB into the device, to skip FAT */
+                {O_OFF_FIXED, .val = 1024 * 1024 * 16}, {O_DROP},
                     /* print one line of aggregated
                         per second results */
                     {O_PRINTF}, {O_FORMAT},
-                    {O_SEQUENCE, 3},
                         /* linear write 0x5a */
                         {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
                             {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_LIN, 8192, -1},
+                            { (random ? O_OFF_RAND : O_OFF_LIN),
+					erasesize / blocksize, -1},
                             {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
-                            {O_OFF_RAND, 1, 4 * 1024 * 1024}, {O_WRITE_RAND},
-                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
-                            {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_LIN, 8192, -1},
-                            {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
-                            {O_OFF_RAND, 2, 4 * 1024 * 1024}, {O_WRITE_RAND},
-                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 3},
-                            {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_LIN, 8192, -1},
-                            {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
-                            {O_OFF_RAND, 3, 4 * 1024 * 1024}, {O_WRITE_RAND},
-#if 0
-			{O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 1},
-                            {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_LIN, 8192, -1},
-                            {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
-                            {O_OFF_RAND, 4, 4 * 1024 * 1024}, {O_WRITE_RAND},
-                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 1},
-                            {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_LIN, 8192, -1},
-                            {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
-                            {O_OFF_RAND, 5, 4 * 1024 * 1024}, {O_WRITE_RAND},
-                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 1},
-                            {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_LIN, 8192, -1},
-                            {O_REDUCE, .aggregate = A_AVERAGE}, {O_BPS},
-                            {O_OFF_RAND, 8, 4 * 1024 * 1024}, {O_WRITE_RAND},
-#endif
-                        {O_END},
+                            {O_OFF_RAND, count, 2 * erasesize}, {O_WRITE_RAND},
                 {O_NEWLINE},
                 {O_END},
             {O_END},
 	};
-	call(program, dev, 0, 4 * 1024 * 1024, 0);
-#endif
+	call(program, dev, 0, erasesize, 0);
 
 	return 0;
-}
-
-static unsigned int find_order(unsigned int large, unsigned int small)
-{
-	unsigned int o;
-
-	for (o=1; small < large; small <<= 1)
-		o++;
-
-	return o;
 }
 
 static int try_find_fat(struct device *dev, unsigned int erasesize,
@@ -517,6 +494,8 @@ static void print_help(const char *name)
 	printf("    --scatter-span=N span each write across N blocks\n");
 	printf("-f, --find-fat	analyse first few erase blocks\n");
 	printf("    --fat-nr=N	look through first N erase blocks (default: 6)\n");
+	printf("-O, --open-au	find number of open erase blocks\n");
+	printf("    --open-au-nr=N try N open erase blocks\n");
 	printf("-r, --random	use pseudorandom access with erase block\n");
 	printf("-v, --verbose	increase verbosity of output\n");
 	printf("-c, --count=N	run each test N times (default: 8\n");
@@ -527,7 +506,7 @@ static void print_help(const char *name)
 struct arguments {
 	const char *dev;
 	const char *out;
-	bool scatter, interval, program, fat;
+	bool scatter, interval, program, fat, open_au;
 	bool random;
 	int count;
 	int blocksize;
@@ -536,6 +515,7 @@ struct arguments {
 	int scatter_span;
 	int interval_order;
 	int fat_nr;
+	int open_au_nr;
 };
 
 static int parse_arguments(int argc, char **argv, struct arguments *args)
@@ -549,6 +529,8 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 		{ "interval-order", 1, NULL, 'I' },
 		{ "findfat", 0, NULL, 'f' },
 		{ "fat-nr", 1, NULL, 'F' },
+		{ "open-au", 0, NULL, 'O' },
+		{ "open-au-nr", 1, NULL, '0' },
 		{ "random", 0, NULL, 'r' },
 		{ "verbose", 0, NULL, 'v' },
 		{ "count", 1, NULL, 'c' },
@@ -563,11 +545,13 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 	args->scatter_span = 1;
 	args->blocksize = 16384;
 	args->erasesize = 4 * 1024 * 1024;
+	args->fat_nr = 6;
+	args->open_au_nr = 2;
 
 	while (1) {
 		int c;
 
-		c = getopt_long(argc, argv, "o:sifF:vrc:b:e:p", long_options, &optind);
+		c = getopt_long(argc, argv, "o:sifF:Ovrc:b:e:p", long_options, &optind);
 
 		if (c == -1)
 			break;
@@ -605,8 +589,17 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 			args->fat_nr = atoi(optarg);
 			break;
 
+		case 'O':
+			args->open_au = 1;
+			break;
+
+		case '0':
+			args->open_au_nr = atoi(optarg);
+			break;
+
 		case 'r':
 			args->random = 1;
+			break;
 
 		case 'p':
 			args->program = 1;
@@ -643,7 +636,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 	args->dev = argv[optind];
 
 	if (!(args->scatter || args->interval || args->program ||
-	      args->fat)) {
+	      args->fat || args->open_au)) {
 		fprintf(stderr, "%s: need at least one action\n", argv[0]);
 		return -EINVAL;
 	}
@@ -698,7 +691,17 @@ int main(int argc, char **argv)
 
 	if (args.fat) {
 		ret = try_find_fat(&dev, args.erasesize, args.blocksize,
-				   args.count, args.random);
+				   args.fat_nr, args.random);
+		if (ret < 0) {
+			errno = -ret;
+			perror("find_fat");
+			return ret;
+		}
+	}
+
+	if (args.open_au) {
+		ret = try_open_au(&dev, args.erasesize, args.blocksize,
+				  args.open_au_nr, args.random);
 		if (ret < 0) {
 			errno = -ret;
 			perror("find_fat");
