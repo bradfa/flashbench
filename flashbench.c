@@ -286,6 +286,58 @@ static unsigned int find_order(unsigned int large, unsigned int small)
 	return o;
 }
 
+static int try_read_alignment(struct device *dev, int tries, int count,
+				off_t maxalign, off_t align, size_t blocksize)
+{
+	ns_t pre[count], on[count], post[count];
+	char pre_s[8], on_s[8], post_s[8], diff_s[8];
+	int i, ret;
+
+	memset(pre, 0, sizeof(pre));
+	memset(on, 0, sizeof(on));
+	memset(post, 0, sizeof(post));
+
+	for (i = 0; i < tries; i++) {
+		ret = time_read_interval(dev, count, pre, blocksize,
+					 align - blocksize, maxalign);
+		returnif(ret);
+
+		ret = time_read_interval(dev, count, on, blocksize,
+					 align - blocksize / 2, maxalign);
+		returnif(ret);
+
+		ret = time_read_interval(dev, count, post, blocksize,
+					 align, maxalign);
+		returnif(ret);
+	}
+
+	format_ns(pre_s,  ns_avg(count, pre));
+	format_ns(on_s,   ns_avg(count, on));
+	format_ns(post_s, ns_avg(count, post));
+	format_ns(diff_s, ns_avg(count, on) - (ns_avg(count, pre) + ns_avg(count, post)) / 2);
+	printf("align %lld\tpre %s\ton %s\tpost %s\tdiff %s\n", (long long)align, pre_s, on_s, post_s, diff_s);
+
+	return 0;
+}
+
+static int try_read_alignments(struct device *dev, int tries, int blocksize)
+{
+	const int count = 32;
+	int ret;
+	off_t align, maxalign;
+
+	/* make sure we can fit eight power-of-two blocks in the device */
+	for (maxalign = blocksize * 2; maxalign < dev->size / count; maxalign *= 2)
+		;
+
+	for (align = maxalign; align >= blocksize * 2; align /= 2) {
+		ret = try_read_alignment(dev, tries, count, maxalign, align, blocksize);
+		returnif (ret);
+	}
+
+	return 0;
+}
+
 static int try_program(struct device *dev)
 {
 #if 0
@@ -506,7 +558,7 @@ static void print_help(const char *name)
 struct arguments {
 	const char *dev;
 	const char *out;
-	bool scatter, interval, program, fat, open_au;
+	bool scatter, interval, program, fat, open_au, align;
 	bool random;
 	int count;
 	int blocksize;
@@ -525,6 +577,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 		{ "scatter", 0, NULL, 's' },
 		{ "scatter-order", 1, NULL, 'S' },
 		{ "scatter-span", 1, NULL, '$' },
+		{ "align", 0, NULL, 'a' },
 		{ "interval", 0, NULL, 'i' },
 		{ "interval-order", 1, NULL, 'I' },
 		{ "findfat", 0, NULL, 'f' },
@@ -551,7 +604,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 	while (1) {
 		int c;
 
-		c = getopt_long(argc, argv, "o:sifF:Ovrc:b:e:p", long_options, &optind);
+		c = getopt_long(argc, argv, "o:siafF:Ovrc:b:e:p", long_options, &optind);
 
 		if (c == -1)
 			break;
@@ -571,6 +624,10 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 
 		case '$':
 			args->scatter_span = atoi(optarg);
+			break;
+
+		case 'a':
+			args->align = 1;
 			break;
 
 		case 'i':
@@ -636,7 +693,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 	args->dev = argv[optind];
 
 	if (!(args->scatter || args->interval || args->program ||
-	      args->fat || args->open_au)) {
+	      args->fat || args->open_au || args->align)) {
 		fprintf(stderr, "%s: need at least one action\n", argv[0]);
 		return -EINVAL;
 	}
@@ -695,6 +752,14 @@ int main(int argc, char **argv)
 		if (ret < 0) {
 			errno = -ret;
 			perror("find_fat");
+		}
+	}
+
+	if (args.align) {
+		ret = try_read_alignments(&dev, args.count, args.blocksize);
+		if (ret < 0) {
+			errno = -ret;
+			perror("try_align");
 			return ret;
 		}
 	}
