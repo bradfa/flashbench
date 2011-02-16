@@ -503,6 +503,9 @@ static int lfsr(unsigned short v, unsigned int bits)
 		exit(-1);
 	}
 
+	if (v == (((1 << bits) - 1) & 0xace1))
+		return 0;
+
 	if (v == 0)
 		v = ((1 << bits) - 1) & 0xace1;
 
@@ -571,7 +574,7 @@ static struct operation *off_rand(struct operation *op, struct device *dev,
 	for (i = 0; i < num && next; i++) {
 		do {
 			pos = lfsr(pos, bits);
-		} while (pos > num);
+		} while (pos >= num);
 		next = call_aggregate(op+1, dev, off + pos * val, max, len, op);
 	}
 
