@@ -16,7 +16,7 @@ int main(int argc, char *argv[])
 	unsigned long long range[2];
 
 	if (argc != 4) {
-		fprintf(stderr, "usage: %d <device> <start> <length>\n",
+		fprintf(stderr, "usage: %s <device> <start> <length>\n",
 			argv[0]);
 	}
 
