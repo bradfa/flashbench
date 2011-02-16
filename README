@@ -71,6 +71,38 @@ from those that have been written.
 Writes a scatter plot into a file that can be used as input
 for a ''gnuplot -p -e 'plot "file"' ''
 
+== Finding the number of open erase blocks ==
+
+''flashbench --open-au <device> --open-au-nr=<nr> --erasesize=<size> [--random]''
+
+Example:
+
+$ sudo ./flashbench -O --erasesize=$[4 * 1024 * 1024] \
+	--blocksize=$[256 * 1024] /dev/mmcblk0  --open-au-nr=2
+4MiB    8.79M/s
+2MiB    7.41M/s
+1MiB    6.87M/s
+512KiB  6.39M/s
+256KiB  6.27M/s
+$ sudo ./flashbench -O --erasesize=$[4 * 1024 * 1024] \
+	--blocksize=$[256 * 1024] /dev/mmcblk0  --open-au-nr=3
+4MiB    7.75M/s
+2MiB    5.03M/s
+1MiB    3.24M/s
+512KiB  1.76M/s
+256KiB  912K/s
+
+In this case, trying 2 open AUs shows fast accesses for small
+block sizes, but trying 3 open AUs is much slower, and degrades
+further at smaller sizes.
+
+Try varying numbers until hitting the cut-off point.
+For cards that are fast when using --random, this will find
+the cut-off more reliably.
+
+Some cards can do more open segments in linear mode than they
+can in random mode.
+
 == References ==
 
 [1] https://wiki.linaro.org/WorkingGroups/KernelConsolidation/Projects/FlashCardSurvey
