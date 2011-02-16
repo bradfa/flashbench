@@ -118,13 +118,6 @@ static void regression(ns_t ns[], off_t bytes[], int count, ns_t *atime, float *
 	*throughput = 1000.0 / slope;
 }
 
-static void flush_read_cache(struct device *dev)
-{
-	off_t cache_size = 1024 * 1024; /* FIXME: use detected size */
-
-	time_read(dev, 2 * cache_size, dev->size - 2 * cache_size);
-}
-
 static int time_read_interval(struct device *dev, int count, ns_t results[],
 				 size_t size, off_t offset, off_t interval)
 {
@@ -139,39 +132,6 @@ static int time_read_interval(struct device *dev, int count, ns_t results[],
 
 		if (results[i] == 0 || results[i] > ret)
 			results[i] = ret;
-	}
-
-	return 0;
-}
-
-static int try_read_cache(struct device *dev)
-{
-	const int rounds = 18;
-	const int tries = 8;
-	ns_t times[rounds];
-	int i;
-
-	for (i = 0; i < rounds; i++) {
-		long blocksize = 512l << i;
-		char min[8];
-		int j;
-
-		times[i] = LLONG_MAX;
-
-		for (j = 0; j < tries; j++) {
-			ns_t ns;
-			ns = time_read(dev, 1024 * 1024 * 1024, blocksize);
-
-			returnif (ns);
-
-			if (ns < times[i])
-				times[i] = ns;
-		}
-
-		format_ns(min, times[i]);
-
-		printf("%ld bytes: %s, %g MB/s\n", blocksize, min, 
-					blocksize / (times[i] / 1000.0));
 	}
 
 	return 0;
@@ -224,50 +184,6 @@ static int try_intervals(struct device *dev, int count, int rounds)
 	for (i=0; i<rounds; i++) {
 		printf("bytes %lld, time %lld overhead %g\n", (long long)bytes[i], min[i],
 			min[i] - atime - bytes[i] * 1000 / throughput);
-	}
-
-	return 0;
-}
-
-static int try_align(struct device *dev)
-{
-	const int rounds = 11;
-	const int count = 16;
-	int i;
-
-	ns_t aligned[rounds];
-	ns_t unaligned[rounds];
-
-	for (i=0; i<rounds; i++) {
-		off_t blocksize = 512l << (i + 1);
-		ns_t times[count];
-		char buf_a[8], buf_u[8];
-		ns_t avg_a, avg_u;
-		int ret;
-
-		flush_read_cache(dev);
-
-		memset(times, 0, sizeof(times));
-		ret = time_read_interval(dev, count, times, blocksize, 0, blocksize * 8);
-		returnif (ret);
-
-		aligned[i] = ns_min(count, times);
-		avg_a = ns_avg(count, times);
-
-		memset(times, 0, sizeof(times));
-		ret = time_read_interval(dev, count, times, blocksize, blocksize / 2, blocksize * 8);
-		returnif (ret);
-
-		unaligned[i] = ns_min(count, times);
-		avg_u = ns_avg(count, times);
-
-		format_ns(buf_a, aligned[i]);
-		format_ns(buf_u, unaligned[i]);
-
-		printf("%lld bytes: aligned %s unaligned %s diff %lld, %02g%% min %02g%% avg\n",
-			(long long)blocksize, buf_a, buf_u, unaligned[i] - aligned[i],
-			 100.0 * (unaligned[i] - aligned[i]) / aligned[i],
-			 100.0 * (avg_u - avg_a) / avg_a);
 	}
 
 	return 0;
@@ -355,58 +271,6 @@ static int try_scatter_io(struct device *dev, int tries, int scatter_order,
 
 	for (j = 0; j < count; j++) {
 		fprintf(out, "%f	%f\n", j * blocksize / (1024 * 1024.0), min[j] / 1000000.0);
-	}
-
-	return 0;
-}
-
-static int try_read_alignment(struct device *dev, int tries, int count,
-				off_t maxalign, off_t align, size_t blocksize)
-{
-	ns_t pre[count], on[count], post[count];
-	char pre_s[8], on_s[8], post_s[8], diff_s[8];
-	int i, ret;
-
-	memset(pre, 0, sizeof(pre));
-	memset(on, 0, sizeof(on));
-	memset(post, 0, sizeof(post));
-
-	for (i = 0; i < tries; i++) {
-		ret = time_read_interval(dev, count, pre, blocksize,
-					 align - blocksize, maxalign);
-		returnif(ret);
-
-		ret = time_read_interval(dev, count, on, blocksize,
-					 align - blocksize / 2, maxalign);
-		returnif(ret);
-
-		ret = time_read_interval(dev, count, post, blocksize,
-					 align, maxalign);
-		returnif(ret);
-	}
-
-	format_ns(pre_s,  ns_avg(count, pre));
-	format_ns(on_s,   ns_avg(count, on));
-	format_ns(post_s, ns_avg(count, post));
-	format_ns(diff_s, ns_avg(count, on) - (ns_avg(count, pre) + ns_avg(count, post)) / 2);
-	printf("align %lld\tpre %s\ton %s\tpost %s\tdiff %s\n", (long long)align, pre_s, on_s, post_s, diff_s);
-
-	return 0;
-}
-
-static int try_read_alignments(struct device *dev, int tries, int blocksize)
-{
-	const int count = 32;
-	int ret;
-	off_t align, maxalign;
-
-	/* make sure we can fit eight power-of-two blocks in the device */
-	for (maxalign = blocksize * 2; maxalign < dev->size / count; maxalign *= 2)
-		;
-
-	for (align = maxalign; align >= blocksize * 2; align /= 2) {
-		ret = try_read_alignment(dev, tries, count, maxalign, align, blocksize);
-		returnif (ret);
 	}
 
 	return 0;
@@ -635,7 +499,6 @@ static void print_help(const char *name)
 	printf("-s, --scatter	run scatter read test\n");
 	printf("    --scatter-order=N scatter across 2^N blocks\n");
 	printf("    --scatter-span=N span each write across N blocks\n");
-	printf("-r, --rcache	determine read cache size\n");
 	printf("-v, --verbose	increase verbosity of output\n");
 	printf("-c, --count=N	run each test N times (default: 8\n");
 	printf("-b, --blocksize=N use a blocksize of N (default:16K)\n");
@@ -645,7 +508,7 @@ static void print_help(const char *name)
 struct arguments {
 	const char *dev;
 	const char *out;
-	bool scatter, rcache, align, interval, program;
+	bool scatter, interval, program;
 	int count;
 	int blocksize;
 	int erasesize;
@@ -661,8 +524,6 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 		{ "scatter", 0, NULL, 's' },
 		{ "scatter-order", 1, NULL, 'S' },
 		{ "scatter-span", 1, NULL, '$' },
-		{ "rcache", 0, NULL, 'r' },
-		{ "align", 0, NULL, 'a' },
 		{ "interval", 0, NULL, 'i' },
 		{ "interval-order", 1, NULL, 'I' },
 		{ "verbose", 0, NULL, 'v' },
@@ -702,14 +563,6 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 
 		case '$':
 			args->scatter_span = atoi(optarg);
-			break;
-
-		case 'r':
-			args->rcache = 1;
-			break;
-
-		case 'a':
-			args->align = 1;
 			break;
 
 		case 'i':
@@ -754,9 +607,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 
 	args->dev = argv[optind];
 
-	if (!(args->scatter || args->rcache ||
-	      args->align || args->interval ||
-	      args->program)) {
+	if (!(args->scatter || args->interval || args->program)) {
 		fprintf(stderr, "%s: need at least one action\n", argv[0]);
 		return -EINVAL;
 	}
@@ -805,24 +656,6 @@ int main(int argc, char **argv)
 		if (ret < 0) {
 			errno = -ret;
 			perror("try_scatter_io");
-			return ret;
-		}
-	}
-
-	if (args.align) {
-		ret = try_read_alignments(&dev, args.count, args.blocksize);
-		if (ret < 0) {
-			errno = -ret;
-			perror("try_align");
-			return ret;
-		}
-	}
-
-	if (args.rcache) {
-		ret = try_read_cache(&dev);
-		if (ret < 0) {
-			errno = -ret;
-			perror("try_read_cache");
 			return ret;
 		}
 	}
