@@ -520,11 +520,11 @@ static int try_find_fat(struct device *dev, unsigned int erasesize,
                 /* print one line of aggregated
                     per second results */
                 {O_PRINTF}, {O_FORMAT},
-		    {random ? O_OFF_RAND : O_OFF_LIN, count, erasesize},
+		    {O_OFF_LIN, count, erasesize},
                         /* linear write 0x5a */
                         {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 1},
                             {O_REDUCE, .aggregate = A_AVERAGE},
-                            {O_OFF_LIN, erasesize / blocksize, -1},
+                            {random ? O_OFF_RAND : O_OFF_LIN, erasesize / blocksize, -1},
                             {O_BPS},{O_WRITE_RAND},
                 {O_NEWLINE},
                 {O_END},
