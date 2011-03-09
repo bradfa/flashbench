@@ -26,7 +26,7 @@
 
 static inline long long time_to_ns(struct timespec *ts)
 {
-	return ts->tv_sec * 1000 * 1000 * 1000 + ts->tv_nsec;
+	return (long long)ts->tv_sec * 1000 * 1000 * 1000 + ts->tv_nsec;
 }
 
 static long long get_ns(void)
