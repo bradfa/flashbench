@@ -322,7 +322,7 @@ static int try_read_alignment(struct device *dev, int tries, int count,
 
 static int try_read_alignments(struct device *dev, int tries, int blocksize)
 {
-	const int count = 32;
+	const int count = 7;
 	int ret;
 	off_t align, maxalign;
 
