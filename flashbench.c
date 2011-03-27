@@ -466,6 +466,46 @@ static int try_program(struct device *dev)
 	return 0;
 }
 
+static int try_open_au_oob(struct device *dev, unsigned int erasesize,
+			unsigned int blocksize,
+			unsigned int count,
+			bool random)
+{
+	/* find maximum number of open AUs */
+	struct operation program[] = {
+            /* loop through power of two multiple of one sector */
+            {O_LEN_POW2, find_order(erasesize, blocksize), -(long long)blocksize},
+            {O_SEQUENCE, 4},
+                /* print block size */
+                {O_DROP},
+                    {O_PRINTF},
+                    {O_FORMAT},
+                    {O_LENGTH},
+                /* start 16 MB into the device, to skip FAT */
+                {O_OFF_FIXED, .val = 4 * 1024 * 4128}, {O_DROP},
+                    /* print one line of aggregated
+                        per second results */
+                    {O_PRINTF}, {O_FORMAT}, {O_BPS},
+                        /* linear write 0x5a */
+                        {O_REDUCE, .aggregate = A_MAXIMUM}, {O_REPEAT, 1},
+                            {O_REDUCE, .aggregate = A_AVERAGE},
+                            { (random ? O_OFF_RAND : O_OFF_LIN),
+					erasesize / blocksize, -1},
+                            {O_REDUCE, .aggregate = A_AVERAGE}, // {O_BPS},
+                            {O_OFF_RAND, count, /* 2 * erasesize */ 2 * 4128 * 1024}, {O_WRITE_RAND},
+                {O_DROP},
+	                {O_OFF_FIXED, .val = 4 * 1024 * 4128 + 4 * 1024 * 1024}, {O_DROP},
+			{O_LEN_FIXED, .val = 32 * 1024},
+                        {O_OFF_RAND, count, 2 * 4128 * 1024}, {O_WRITE_RAND},
+                {O_NEWLINE},
+                {O_END},
+            {O_END},
+	};
+	call(program, dev, 0, erasesize, 0);
+
+	return 0;
+}
+
 static int try_open_au(struct device *dev, unsigned int erasesize,
 			unsigned int blocksize,
 			unsigned int count,
