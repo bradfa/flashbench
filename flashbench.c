@@ -466,6 +466,7 @@ static int try_program(struct device *dev)
 	return 0;
 }
 
+#if 0
 static int try_open_au_oob(struct device *dev, unsigned int erasesize,
 			unsigned int blocksize,
 			unsigned int count,
@@ -505,12 +506,18 @@ static int try_open_au_oob(struct device *dev, unsigned int erasesize,
 
 	return 0;
 }
+#endif
 
 static int try_open_au(struct device *dev, unsigned int erasesize,
 			unsigned int blocksize,
 			unsigned int count,
+			unsigned long long offset,
 			bool random)
 {
+        /* start 16 MB into the device, to skip FAT */
+	if (offset == -1ull)
+		offset = 1024 * 1024 * 16;
+
 	/* find maximum number of open AUs */
 	struct operation program[] = {
             /* loop through power of two multiple of one sector */
@@ -521,8 +528,7 @@ static int try_open_au(struct device *dev, unsigned int erasesize,
                     {O_PRINTF},
                     {O_FORMAT},
                     {O_LENGTH},
-                /* start 16 MB into the device, to skip FAT */
-                {O_OFF_FIXED, .val = 1024 * 1024 * 16}, {O_DROP},
+                {O_OFF_FIXED, .val = offset}, {O_DROP},
                     /* print one line of aggregated
                         per second results */
                     {O_PRINTF}, {O_FORMAT}, {O_BPS},
@@ -588,6 +594,7 @@ static void print_help(const char *name)
 	printf("    --fat-nr=N	look through first N erase blocks (default: 6)\n");
 	printf("-O, --open-au	find number of open erase blocks\n");
 	printf("    --open-au-nr=N try N open erase blocks\n");
+	printf("    --offset=N  start at position N\n");
 	printf("-r, --random	use pseudorandom access with erase block\n");
 	printf("-v, --verbose	increase verbosity of output\n");
 	printf("-c, --count=N	run each test N times (default: 8\n");
@@ -603,6 +610,7 @@ struct arguments {
 	int count;
 	int blocksize;
 	int erasesize;
+	unsigned long long offset;
 	int scatter_order;
 	int scatter_span;
 	int interval_order;
@@ -624,6 +632,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 		{ "fat-nr", 1, NULL, 'F' },
 		{ "open-au", 0, NULL, 'O' },
 		{ "open-au-nr", 1, NULL, '0' },
+		{ "offset", 1, NULL, 't' },
 		{ "random", 0, NULL, 'r' },
 		{ "verbose", 0, NULL, 'v' },
 		{ "count", 1, NULL, 'c' },
@@ -637,6 +646,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 	args->scatter_order = 9;
 	args->scatter_span = 1;
 	args->blocksize = 16384;
+	args->offset = -1ull;
 	args->erasesize = 4 * 1024 * 1024;
 	args->fat_nr = 6;
 	args->open_au_nr = 2;
@@ -716,6 +726,10 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 
 		case 'e':
 			args->erasesize = atoi(optarg);
+			break;
+
+		case 't':
+			args->offset = strtoull(optarg, NULL, 0);
 			break;
 
 		case '?':
@@ -806,7 +820,7 @@ int main(int argc, char **argv)
 
 	if (args.open_au) {
 		ret = try_open_au(&dev, args.erasesize, args.blocksize,
-				  args.open_au_nr, args.random);
+				  args.open_au_nr, args.offset, args.random);
 		if (ret < 0) {
 			errno = -ret;
 			perror("find_fat");
