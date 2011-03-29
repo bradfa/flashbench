@@ -514,9 +514,9 @@ static int try_open_au(struct device *dev, unsigned int erasesize,
 			unsigned long long offset,
 			bool random)
 {
-        /* start 16 MB into the device, to skip FAT */
+        /* start 16 MB into the device, to skip FAT, round up to full erase blocks */
 	if (offset == -1ull)
-		offset = 1024 * 1024 * 16;
+		offset = (1024 * 1024 * 16 + erasesize - 1) / erasesize * erasesize;
 
 	/* find maximum number of open AUs */
 	struct operation program[] = {
