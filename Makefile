@@ -15,4 +15,4 @@ flashbench: flashbench.o dev.o vm.o
 erase: erase.o
 
 clean:
-	rm flashbench flashbench.o dev.o vm.o
+	rm -f flashbench flashbench.o erase erase.o dev.o vm.o
