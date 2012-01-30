@@ -107,7 +107,7 @@ can in random mode.
 
 [1] https://wiki.linaro.org/WorkingGroups/KernelConsolidation/Projects/FlashCardSurvey
 [2] git clone git://git.linaro.org/people/arnd/flashbench.git
-[3] http://lwn.net/Articles/428XXX FIXME
+[3] http://lwn.net/Articles/428584
 
 Feel free to reach the author by email for any questions
 about the latest version, Arnd Bergmann <arnd.bergmann@linaro.org>,
