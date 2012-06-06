@@ -9,6 +9,8 @@ vm.o: vm.c vm.h dev.h
 flashbench.o: flashbench.c vm.h dev.h
 
 flashbench: flashbench.o dev.o vm.o
+	$(CC) -o $@ flashbench.o dev.o vm.o $(LDFLAGS)
+
 
 erase: erase.o
 
