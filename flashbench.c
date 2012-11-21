@@ -805,7 +805,7 @@ int main(int argc, char **argv)
 				   args.fat_nr, args.random);
 		if (ret < 0) {
 			errno = -ret;
-			perror("find_fat");
+			perror("try_find_fat");
 		}
 	}
 
@@ -813,7 +813,7 @@ int main(int argc, char **argv)
 		ret = try_read_alignments(&dev, args.count, args.blocksize);
 		if (ret < 0) {
 			errno = -ret;
-			perror("try_align");
+			perror("try_read_alignments");
 			return ret;
 		}
 	}
