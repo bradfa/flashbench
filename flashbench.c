@@ -823,7 +823,7 @@ int main(int argc, char **argv)
 				  args.open_au_nr, args.offset, args.random);
 		if (ret < 0) {
 			errno = -ret;
-			perror("find_fat");
+			perror("try_open_au");
 			return ret;
 		}
 	}
