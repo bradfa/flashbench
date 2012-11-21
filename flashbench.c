@@ -628,7 +628,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 		{ "align", 0, NULL, 'a' },
 		{ "interval", 0, NULL, 'i' },
 		{ "interval-order", 1, NULL, 'I' },
-		{ "findfat", 0, NULL, 'f' },
+		{ "find-fat", 0, NULL, 'f' },
 		{ "fat-nr", 1, NULL, 'F' },
 		{ "open-au", 0, NULL, 'O' },
 		{ "open-au-nr", 1, NULL, '0' },
