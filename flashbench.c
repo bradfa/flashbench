@@ -763,7 +763,7 @@ static int parse_arguments(int argc, char **argv, struct arguments *args)
 static FILE *open_output(const char *filename)
 {
 	if (!filename || !strcmp(filename, "-"))
-		return fdopen(0, "w"); /* write to stdout */
+		return fdopen(1, "w"); /* write to stdout */
 
 	return fopen(filename, "w+");
 }
