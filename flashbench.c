@@ -586,20 +586,20 @@ static void print_help(const char *name)
 {
 	printf("%s [OPTION]... [DEVICE]\n", name);
 	printf("run tests on DEVICE, pointing to a flash storage medium.\n\n");
-	printf("-o, --out=FILE	write output to FILE instead of stdout\n");
-	printf("-s, --scatter	run scatter read test\n");
-	printf("    --scatter-order=N scatter across 2^N blocks\n");
-	printf("    --scatter-span=N span each write across N blocks\n");
-	printf("-f, --find-fat	analyse first few erase blocks\n");
-	printf("    --fat-nr=N	look through first N erase blocks (default: 6)\n");
-	printf("-O, --open-au	find number of open erase blocks\n");
-	printf("    --open-au-nr=N try N open erase blocks\n");
-	printf("    --offset=N  start at position N\n");
-	printf("-r, --random	use pseudorandom access with erase block\n");
-	printf("-v, --verbose	increase verbosity of output\n");
-	printf("-c, --count=N	run each test N times (default: 8\n");
-	printf("-b, --blocksize=N use a blocksize of N (default:16K)\n");
-	printf("-e, --erasesize=N use a eraseblock size of N (default:4M)\n");
+	printf("-o, --out=FILE		write output to FILE instead of stdout\n");
+	printf("-s, --scatter		run scatter read test\n");
+	printf("    --scatter-order=N 	scatter across 2^N blocks (default:9)\n");
+	printf("    --scatter-span=N 	span each write across N blocks (default:1)\n");
+	printf("-f, --find-fat		analyse first few erase blocks\n");
+	printf("    --fat-nr=N		look through first N erase blocks (default:6)\n");
+	printf("-O, --open-au		find number of open erase blocks\n");
+	printf("    --open-au-nr=N 	try N open erase blocks (default:2)\n");
+	printf("    --offset=N  	start at position N\n");
+	printf("-r, --random		use pseudorandom access with erase block\n");
+	printf("-v, --verbose		increase verbosity of output\n");
+	printf("-c, --count=N		run each test N times (default:8)\n");
+	printf("-b, --blocksize=N 	use a blocksize of N (default:16K)\n");
+	printf("-e, --erasesize=N 	use a eraseblock size of N (default:4M)\n");
 }
 
 struct arguments {
